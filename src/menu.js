@@ -8,9 +8,11 @@ import { formatSyncResult, syncConfigToGit } from './config-sync.js';
 
 const APP_TITLE = 'Mode-Scripts v1';
 const CONFIG_FILE = path.resolve('config', 'mode-scripts.json');
+const SECRETS_FILE = path.resolve('config', 'secrets.json');
 const DEFAULT_THRESHOLD = 4;
 const DEFAULT_WINDOW_SECONDS = 12;
 const DEFAULT_COOLDOWN_SECONDS = 90;
+const DEFAULT_LIVE_POLL_SECONDS = 60;
 const LOG_LINES = 13;
 const UI_WIDTH = 92;
 const BODY_START_ROW = 11;
@@ -24,6 +26,10 @@ const DEFAULT_CONFIG = {
   mode: 'codes-giveaways',
   codeChannels: [],
   giveawayChannels: [],
+  liveChannels: [],
+  liveAlertsEnabled: false,
+  livePollSeconds: DEFAULT_LIVE_POLL_SECONDS,
+  liveMentionEveryone: true,
   keydropBridge: false,
   giveawayThreshold: DEFAULT_THRESHOLD,
   giveawayWindowSeconds: DEFAULT_WINDOW_SECONDS,
@@ -99,7 +105,7 @@ try {
 async function mainMenu(config) {
   while (true) {
     renderHome(config);
-    const choice = await askChoice('Selecciona opcion [1]: ', ['1', '2', '3', '4', '5', '6', '7', '8', '9'], '1');
+    const choice = await askChoice('Selecciona opcion [1]: ', ['1', '2', '3', '4', '5', '6', '7', '8', '9', '10'], '1');
 
     if (choice === '1') {
       const session = await buildSessionConfig(config);
@@ -119,18 +125,20 @@ async function mainMenu(config) {
     } else if (choice === '4') {
       await manageGiveawayChannels(config);
     } else if (choice === '5') {
-      await manageGiveawaySettings(config);
+      await manageLiveAlerts(config);
     } else if (choice === '6') {
+      await manageGiveawaySettings(config);
+    } else if (choice === '7') {
       config.keydropBridge = !config.keydropBridge;
       await saveConfig(config);
       printStatus(`KeyDrop bridge: ${config.keydropBridge ? 'activado' : 'desactivado'}.`);
       await pause();
-    } else if (choice === '7') {
+    } else if (choice === '8') {
       renderConfigPath();
       await pause();
-    } else if (choice === '8') {
-      await pushConfigToGitHub(config);
     } else if (choice === '9') {
+      await pushConfigToGitHub(config);
+    } else if (choice === '10') {
       return false;
     }
   }
@@ -144,6 +152,8 @@ function renderHome(config) {
     metric('MODO', MODE_LABELS[config.mode] || config.mode, 'hot'),
     metric('CODIGOS', formatChannels(config.codeChannels) || 'sin configurar', config.codeChannels.length ? 'neon' : 'muted'),
     metric('SORTEOS', formatChannels(config.giveawayChannels) || 'sin configurar', config.giveawayChannels.length ? 'acid' : 'muted'),
+    metric('DIRECTOS', formatChannels(config.liveChannels) || 'sin configurar', config.liveChannels.length ? 'inferno' : 'muted'),
+    metric('DISCORD', config.liveAlertsEnabled ? 'LIVE ALERTS ON' : 'LIVE ALERTS OFF', config.liveAlertsEnabled ? 'blood' : 'muted'),
     metric('REGLA', `${config.giveawayThreshold} usuarios / ${config.giveawayWindowSeconds}s`, 'amber'),
     metric('COOLDOWN', `${config.giveawayCooldownSeconds}s`, 'steel'),
     metric('KEYDROP', config.keydropBridge ? 'BRIDGE ON' : 'BRIDGE OFF', config.keydropBridge ? 'neon' : 'muted'),
@@ -154,11 +164,12 @@ function renderHome(config) {
     menuOption('2', 'Cambiar modo de arranque', 'codigos / sorteos / ambos'),
     menuOption('3', 'Canales de codigos', 'anadir, eliminar o reemplazar'),
     menuOption('4', 'Canales de sorteos', 'anadir, eliminar o reemplazar'),
-    menuOption('5', 'Ajustes detector de sorteos', 'umbral, ventana y cooldown'),
-    menuOption('6', 'Activar/desactivar KeyDrop bridge', config.keydropBridge ? 'actualmente ON' : 'actualmente OFF'),
-    menuOption('7', 'Ver ruta de configuracion', 'archivo JSON persistente'),
-    menuOption('8', 'Subir configuracion a GitHub', 'commit + push automatico'),
-    menuOption('9', 'Salir', 'cerrar launcher')
+    menuOption('5', 'Alertas directos Discord', 'canales, webhook y @everyone'),
+    menuOption('6', 'Ajustes detector de sorteos', 'umbral, ventana y cooldown'),
+    menuOption('7', 'Activar/desactivar KeyDrop bridge', config.keydropBridge ? 'actualmente ON' : 'actualmente OFF'),
+    menuOption('8', 'Ver ruta de configuracion', 'archivo JSON persistente'),
+    menuOption('9', 'Subir configuracion a GitHub', 'commit + push automatico'),
+    menuOption('10', 'Salir', 'cerrar launcher')
   ]);
 }
 
@@ -292,6 +303,92 @@ async function manageGiveawayChannels(config) {
   }
 }
 
+async function manageLiveAlerts(config) {
+  while (true) {
+    clearScreen();
+    printBanner('DISCORD LIVE');
+    const secrets = await loadSecrets();
+    const webhookConfigured = Boolean(process.env.DISCORD_WEBHOOK_URL || secrets.discordWebhookUrl);
+    const channelRows = config.liveChannels.length > 0
+      ? config.liveChannels.map(formatSavedLiveChannelRow)
+      : [muted('No hay canales de directos guardados.')];
+
+    printBox('ALERTAS DIRECTOS // DISCORD WEBHOOK', [
+      metric('ESTADO', config.liveAlertsEnabled ? 'ON' : 'OFF', config.liveAlertsEnabled ? 'blood' : 'muted'),
+      metric('WEBHOOK', webhookConfigured ? 'configurado localmente' : 'sin configurar', webhookConfigured ? 'neon' : 'alert'),
+      metric('PING', config.liveMentionEveryone ? '@everyone ON' : '@everyone OFF', config.liveMentionEveryone ? 'inferno' : 'muted'),
+      metric('POLL', `${config.livePollSeconds}s`, 'ember'),
+      '',
+      ...channelRows,
+      '',
+      menuOption('1', 'Anadir canal(es)', 'separados por coma'),
+      menuOption('2', 'Eliminar canal', 'por numero o nombre'),
+      menuOption('3', 'Reemplazar lista completa', 'sobrescribe esta lista'),
+      menuOption('4', 'Borrar todos', 'deja la lista vacia'),
+      menuOption('5', 'Activar/desactivar alertas', config.liveAlertsEnabled ? 'actualmente ON' : 'actualmente OFF'),
+      menuOption('6', 'Activar/desactivar @everyone', config.liveMentionEveryone ? 'actualmente ON' : 'actualmente OFF'),
+      menuOption('7', 'Cambiar intervalo de comprobacion', 'minimo 20s'),
+      menuOption('8', 'Guardar webhook Discord local', 'no se sube a GitHub'),
+      menuOption('9', 'Volver', 'menu principal')
+    ]);
+
+    const choice = await askChoice('Selecciona opcion [1]: ', ['1', '2', '3', '4', '5', '6', '7', '8', '9'], '1');
+    if (choice === '1') {
+      const channels = await askChannels('Canales de directos a anadir separados por coma: ', '');
+      config.liveChannels = mergeChannels(config.liveChannels, channels);
+      await saveConfig(config);
+      printStatus(`Canales guardados: ${formatChannels(config.liveChannels)}.`);
+      await pause();
+    } else if (choice === '2') {
+      if (config.liveChannels.length === 0) {
+        printStatus('No hay canales para eliminar.');
+        await pause();
+        continue;
+      }
+
+      const target = (await rl.question(promptText('Numero o nombre de canal a eliminar: '))).trim();
+      const removed = removeChannel(config.liveChannels, target);
+      if (removed) {
+        await saveConfig(config);
+        printStatus(`Canal eliminado: #${removed}.`);
+      } else {
+        printStatus('No se encontro ese canal.');
+      }
+      await pause();
+    } else if (choice === '3') {
+      config.liveChannels = await askChannels('Nueva lista completa separada por coma: ', '');
+      await saveConfig(config);
+      printStatus(`Lista reemplazada: ${formatChannels(config.liveChannels)}.`);
+      await pause();
+    } else if (choice === '4') {
+      config.liveChannels = [];
+      await saveConfig(config);
+      printStatus('Canales de directos borrados.');
+      await pause();
+    } else if (choice === '5') {
+      config.liveAlertsEnabled = !config.liveAlertsEnabled;
+      await saveConfig(config);
+      printStatus(`Alertas directos Discord: ${config.liveAlertsEnabled ? 'activadas' : 'desactivadas'}.`);
+      await pause();
+    } else if (choice === '6') {
+      config.liveMentionEveryone = !config.liveMentionEveryone;
+      await saveConfig(config);
+      printStatus(`@everyone: ${config.liveMentionEveryone ? 'activado' : 'desactivado'}.`);
+      await pause();
+    } else if (choice === '7') {
+      config.livePollSeconds = await askInteger(`Intervalo segundos [${config.livePollSeconds}]: `, config.livePollSeconds, 20, 3600);
+      await saveConfig(config);
+      printStatus(`Intervalo guardado: ${config.livePollSeconds}s.`);
+      await pause();
+    } else if (choice === '8') {
+      await configureDiscordWebhookSecret();
+      await pause();
+    } else {
+      return;
+    }
+  }
+}
+
 async function manageGiveawaySettings(config) {
   clearScreen();
   printBanner('GIVEAWAY TUNING');
@@ -314,6 +411,9 @@ function renderConfigPath() {
   printBanner('CONFIG FILE');
   printBox('CONFIG FILE // PERSISTENT STATE', [
     steel(CONFIG_FILE),
+    '',
+    `Secretos locales: ${SECRETS_FILE}`,
+    'El webhook Discord se guarda ahi y no se sube a GitHub.',
     '',
     'Puedes editar este JSON manualmente si quieres.',
     'El menu lo vuelve a cargar cada vez que arrancas npm run menu.'
@@ -348,6 +448,32 @@ async function pushConfigToGitHub(config) {
   await pause();
 }
 
+async function configureDiscordWebhookSecret() {
+  printBox('WEBHOOK DISCORD // LOCAL SECRET', [
+    `Archivo local: ${SECRETS_FILE}`,
+    'Este archivo esta ignorado por Git.',
+    'No pegues el webhook en config/mode-scripts.json porque el repo es publico.',
+    '',
+    'Pega el webhook completo o deja vacio para cancelar.'
+  ]);
+
+  const webhookUrl = (await rl.question(promptText('Discord webhook URL: '))).trim();
+  if (!webhookUrl) {
+    printStatus('Configuracion de webhook cancelada.');
+    return;
+  }
+
+  if (!/^https:\/\/discord\.com\/api\/webhooks\/\d+\/[\w-]+/i.test(webhookUrl)) {
+    printStatus('Ese webhook no parece una URL valida de Discord.', 'error');
+    return;
+  }
+
+  const secrets = await loadSecrets();
+  secrets.discordWebhookUrl = webhookUrl;
+  await saveSecrets(secrets);
+  printStatus(`Webhook guardado localmente en ${SECRETS_FILE}.`, 'ok');
+}
+
 async function buildSessionConfig(config) {
   if (modeUsesCodes(config.mode) && config.codeChannels.length === 0) {
     printStatus('Faltan canales de codigos para este modo.');
@@ -367,6 +493,11 @@ async function buildSessionConfig(config) {
       config.giveawayChannels = await askChannels('Canales de sorteos separados por coma: ', '');
     }
 
+    await saveConfig(config);
+  }
+
+  if (config.liveAlertsEnabled && config.liveChannels.length === 0) {
+    config.liveChannels = await askChannels('Canales de directos separados por coma: ', '');
     await saveConfig(config);
   }
 
@@ -409,6 +540,30 @@ async function buildSessionConfig(config) {
       status: 'starting',
       pid: null
     });
+  }
+
+  if (config.liveAlertsEnabled && config.liveChannels.length > 0) {
+    if (await hasDiscordWebhookSecret()) {
+      processes.push({
+        key: 'directos',
+        title: 'Discord Live Alerts',
+        script: 'src/live-alerts.js',
+        args: [
+          '--channels',
+          config.liveChannels.join(','),
+          '--poll-seconds',
+          String(config.livePollSeconds),
+          config.liveMentionEveryone ? '--everyone' : '--no-everyone'
+        ],
+        channels: config.liveChannels,
+        connectedChannels: new Set(),
+        status: 'starting',
+        pid: null
+      });
+    } else {
+      printStatus(`Falta webhook Discord. Configuralo en ${SECRETS_FILE}.`, 'error');
+      await pause();
+    }
   }
 
   if (processes.length === 0) {
@@ -495,8 +650,10 @@ function prefixStream(stream, childConfig, isError) {
 
 function handleChildLine(childConfig, line, isError) {
   const joinedChannel = line.match(/Join OK #([a-z0-9_]+)/i)?.[1];
-  if (joinedChannel) {
-    childConfig.connectedChannels.add(normalizeChannel(joinedChannel));
+  const liveMonitorChannel = line.match(/Monitor OK #([a-z0-9_]+)/i)?.[1];
+  const readyChannel = joinedChannel || liveMonitorChannel;
+  if (readyChannel) {
+    childConfig.connectedChannels.add(normalizeChannel(readyChannel));
     childConfig.status = 'connected';
   } else if (line.includes('Sesion IRC abierta')) {
     childConfig.status = 'joining';
@@ -512,7 +669,9 @@ function handleChildLine(childConfig, line, isError) {
   let level = isError ? 'error' : 'info';
   if (line.includes('[sorteo]') || line.includes('COPIADO')) {
     level = 'hit';
-  } else if (joinedChannel) {
+  } else if (line.includes('[live-alert]')) {
+    level = 'hit';
+  } else if (readyChannel || line.includes('[live]')) {
     level = 'ok';
   } else if (line.includes('Error') || line.includes('Fallo') || line.includes('cerrada')) {
     level = 'error';
@@ -834,6 +993,27 @@ async function saveConfig(config) {
   Object.assign(config, normalized);
 }
 
+async function loadSecrets() {
+  try {
+    const raw = await readFile(SECRETS_FILE, 'utf8');
+    const parsed = JSON.parse(raw);
+    return parsed && typeof parsed === 'object' ? parsed : {};
+  } catch {
+    return {};
+  }
+}
+
+async function saveSecrets(secrets) {
+  await mkdir(path.dirname(SECRETS_FILE), { recursive: true });
+  await writeFile(SECRETS_FILE, `${JSON.stringify(secrets, null, 2)}\n`, 'utf8');
+}
+
+async function hasDiscordWebhookSecret() {
+  if (process.env.DISCORD_WEBHOOK_URL) return true;
+  const secrets = await loadSecrets();
+  return Boolean(secrets.discordWebhookUrl);
+}
+
 function normalizeConfig(config) {
   const merged = {
     ...DEFAULT_CONFIG,
@@ -848,6 +1028,10 @@ function normalizeConfig(config) {
         : merged.codeChannels || merged.codeChannel
     ),
     giveawayChannels: normalizeChannels(Array.isArray(merged.giveawayChannels) ? merged.giveawayChannels.join(',') : merged.giveawayChannels),
+    liveChannels: normalizeChannels(Array.isArray(merged.liveChannels) ? merged.liveChannels.join(',') : merged.liveChannels),
+    liveAlertsEnabled: Boolean(merged.liveAlertsEnabled),
+    livePollSeconds: clampInteger(merged.livePollSeconds, 20, 3600, DEFAULT_LIVE_POLL_SECONDS),
+    liveMentionEveryone: merged.liveMentionEveryone === undefined ? true : Boolean(merged.liveMentionEveryone),
     keydropBridge: Boolean(merged.keydropBridge),
     giveawayThreshold: clampInteger(merged.giveawayThreshold, 2, 50, DEFAULT_THRESHOLD),
     giveawayWindowSeconds: clampInteger(merged.giveawayWindowSeconds, 1, 300, DEFAULT_WINDOW_SECONDS),
@@ -1008,6 +1192,10 @@ function formatSavedChannelRow(channel, index) {
   return `${muted(String(index + 1).padStart(2, '0'))} ${statusPill('SAVED', 'info')} ${steel('IRC')} ${neon(`#${channel}`)}`;
 }
 
+function formatSavedLiveChannelRow(channel, index) {
+  return `${muted(String(index + 1).padStart(2, '0'))} ${statusPill('SAVED', 'info')} ${inferno('LIVE')} ${neon(`#${channel}`)}`;
+}
+
 function formatOneChannel(channel) {
   return channel ? `#${channel}` : dim('sin configurar');
 }
@@ -1051,6 +1239,7 @@ Menu TUI:
   - Arranca codigos, sorteos o ambos.
   - Guarda canales en ${CONFIG_FILE}.
   - Permite anadir, eliminar y reemplazar canales de codigos y sorteos.
+  - Permite alertar por Discord cuando un canal inicia directo.
   - Puede commitear y pushear config/mode-scripts.json a GitHub.
   - Muestra dashboard con estado por proceso y JOIN OK por canal.
   - En dashboard puedes navegar con down/up, pgdn/pgup, top/bottom.

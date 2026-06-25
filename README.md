@@ -6,6 +6,7 @@ Tiene tres piezas:
 
 - `src/index.js`: detector de codigos. Escucha uno o varios canales, detecta codigos `FFFF-FFFF-FFFF-FFFF`, los copia al portapapeles y reproduce sonido.
 - `src/giveaways.js`: detector de posibles sorteos. Escucha uno o varios canales y avisa si varios usuarios escriben la misma palabra en una ventana corta.
+- `src/live-alerts.js`: detector de directos. Comprueba periodicamente si canales de Twitch pasan a directo y avisa por webhook de Discord.
 - `src/menu.js`: launcher TUI `Mode-Scripts v1`. Permite guardar canales, elegir modo, arrancar procesos y ver estado de conexion por canal.
 
 El bot no escribe en el chat. Usa conexion anonima de lectura tipo `justinfan...`.
@@ -132,6 +133,7 @@ Desde el menu puedes:
 - elegir modo: solo codigos, codigos + sorteos, o solo sorteos;
 - anadir, eliminar, reemplazar o borrar canales de codigos;
 - anadir, eliminar, reemplazar o borrar canales de sorteos;
+- configurar alertas Discord cuando un canal inicia directo;
 - ajustar sensibilidad del detector de sorteos;
 - activar o desactivar el puente KeyDrop;
 - ver la ruta del archivo de configuracion.
@@ -154,6 +156,52 @@ canal1,canal2,canal3
 ```
 
 Puedes usar canales distintos para codigos y para sorteos. Si el modo incluye sorteos pero no hay canales de sorteos guardados, el menu puede usar los canales de codigos como fallback.
+
+### Alertas Discord de Directos
+
+Desde el menu principal entra en:
+
+```text
+Alertas directos Discord
+```
+
+Desde ahi puedes:
+
+- anadir, eliminar o reemplazar canales de Twitch a vigilar;
+- activar o desactivar las alertas;
+- activar o desactivar `@everyone`;
+- cambiar el intervalo de comprobacion;
+- guardar el webhook de Discord localmente.
+
+Los canales se guardan en `config/mode-scripts.json` y pueden sincronizarse entre Windows y macOS. El webhook se guarda en:
+
+```text
+config/secrets.json
+```
+
+Ese archivo esta ignorado por Git para no publicar el webhook en GitHub. Tambien puedes usar variable de entorno:
+
+```bash
+DISCORD_WEBHOOK_URL="https://discord.com/api/webhooks/..."
+```
+
+Comando directo:
+
+```bash
+npm run live-alerts -- --channels canal1,canal2
+```
+
+Probar una sola comprobacion sin enviar a Discord:
+
+```bash
+npm run live-alerts -- --channels canal1 --dry-run --once
+```
+
+Por defecto solo avisa cuando detecta transicion offline -> online. Si el canal ya estaba en directo al arrancar, no manda alerta para evitar spam. Para avisar tambien en ese caso:
+
+```bash
+npm run live-alerts -- --channels canal1 --alert-on-start-live
+```
 
 ### Sincronizar Configuracion
 
@@ -512,6 +560,12 @@ Alertas de sorteo:
 logs/giveaway-alerts.ndjson
 ```
 
+Alertas de directos enviadas a Discord:
+
+```text
+logs/live-alerts.ndjson
+```
+
 Fallos KeyDrop:
 
 ```text
@@ -523,6 +577,7 @@ Ver logs desde terminal:
 ```powershell
 Get-Content .\logs\codes.ndjson
 Get-Content .\logs\giveaway-alerts.ndjson
+Get-Content .\logs\live-alerts.ndjson
 Get-Content .\logs\keydrop-failures.ndjson
 ```
 

@@ -8,6 +8,7 @@
     "menu": "node src/menu.js",
     "start": "node src/index.js",
     "giveaways": "node src/giveaways.js",
+    "live-alerts": "node src/live-alerts.js",
     "config:push": "node src/config-sync.js push",
     "sound-test": "node src/index.js --sound-test",
     "test": "node src/index.js --test"
