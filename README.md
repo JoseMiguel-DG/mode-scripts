@@ -116,7 +116,7 @@ npm run menu
 
 Ejecutalo directamente en una terminal interactiva: PowerShell en Windows o Terminal en macOS. No esta pensado para usarse por pipe o redireccion de entrada.
 
-El menu muestra una cabecera fija `Mode-Scripts v1` en todas las pantallas, con paneles neon de estilo consola, linea de senal IRC y estado rapido de modo, canales y bridge. Guarda configuracion en:
+El menu muestra una cabecera fija `Mode-Scripts v1 // INFERNO OPS` en todas las pantallas, con estetica roja tipo consola hacker, paneles oscuros, linea de senal IRC y estado rapido de modo, canales y bridge. En terminales compatibles usa una superficie TUI propia para que el banner quede anclado arriba y el cuerpo se mueva debajo. Guarda configuracion en:
 
 ```text
 config/mode-scripts.json

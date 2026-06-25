@@ -12,6 +12,7 @@ const DEFAULT_WINDOW_SECONDS = 12;
 const DEFAULT_COOLDOWN_SECONDS = 90;
 const LOG_LINES = 13;
 const UI_WIDTH = 92;
+const BODY_START_ROW = 11;
 const MODES = new Set(['codes', 'codes-giveaways', 'giveaways']);
 const MODE_LABELS = {
   codes: 'Solo codigos',
@@ -44,6 +45,12 @@ const ansi = {
   magenta: '\x1b[35m',
   cyan: '\x1b[36m',
   gray: '\x1b[90m',
+  blood: '\x1b[38;2;255;0;24m',
+  darkRed: '\x1b[38;2;126;0;18m',
+  inferno: '\x1b[38;2;255;38;0m',
+  ember: '\x1b[38;2;255;112;0m',
+  ash: '\x1b[38;2;148;163;184m',
+  bone: '\x1b[38;2;241;245;249m',
   neon: '\x1b[38;2;57;255;20m',
   acid: '\x1b[38;2;190;255;0m',
   hot: '\x1b[38;2;255;0;128m',
@@ -54,6 +61,7 @@ const ansi = {
   panel: '\x1b[38;2;15;255;210m',
   muted: '\x1b[38;2;100;116;139m'
 };
+let tuiActive = false;
 
 if (process.argv.slice(2).some((arg) => arg === '--help' || arg === '-h')) {
   printHelp();
@@ -65,6 +73,8 @@ if (!input.isTTY || !output.isTTY) {
   process.exit(1);
 }
 
+enterTui();
+process.on('exit', leaveTui);
 const rl = createInterface({ input, output });
 
 try {
@@ -77,6 +87,7 @@ try {
   }
 } catch (error) {
   await rl.close();
+  leaveTui();
   console.error(style(`No se pudo iniciar el menu: ${error.message}`, 'red'));
   process.exit(1);
 }
@@ -738,6 +749,10 @@ function statusPill(text, level = 'info') {
   return style(`[${text}]`, colors[level] || colors.info);
 }
 
+function bannerPill(text, color = 'blood') {
+  return style(`[${text}]`, color);
+}
+
 function signalBar(connected, total) {
   const width = 18;
   const ratio = total > 0 ? connected / total : 0;
@@ -822,15 +837,16 @@ function printBanner(section = 'CONTROL PANEL') {
     '|_|  |_|\\___/ \\__,_|\\___| |____/ \\___|_|  |_| .__/ \\__|___/',
     '                                            |_|            '
   ];
-  const palette = ['neon', 'acid', 'steel', 'hot', 'violet', 'neon'];
+  const palette = ['blood', 'inferno', 'ember', 'blood', 'darkRed', 'blood'];
 
-  console.log(hot(makeRail(` ${APP_TITLE.toUpperCase()} // ${section.toUpperCase()} `, '=')));
+  console.log(blood(makeRail(` ${APP_TITLE.toUpperCase()} // ${section.toUpperCase()} // INFERNO OPS `, '=')));
   for (const [index, line] of banner.entries()) {
     console.log(center(style(line, palette[index % palette.length]), UI_WIDTH));
   }
-  console.log(center(`${statusPill('TWITCH IRC', 'ok')} ${muted('//')} ${statusPill('CODE CLIPBOARD', 'hot')} ${muted('//')} ${statusPill('GIVEAWAY RADAR', 'warn')}`, UI_WIDTH));
-  console.log(muted(makeRail('', '-')));
+  console.log(center(`${bannerPill('TWITCH IRC')} ${darkRed('//')} ${bannerPill('CODE CLIPBOARD', 'inferno')} ${darkRed('//')} ${bannerPill('GIVEAWAY RADAR', 'ember')}`, UI_WIDTH));
+  console.log(darkRed(makeRail('', '=')));
   console.log('');
+  pinBodyRegion();
 }
 
 function printBox(title, rows) {
@@ -866,8 +882,41 @@ function boxBorder(label, fill) {
 
 function clearScreen() {
   if (process.stdout.isTTY) {
-    process.stdout.write('\x1Bc');
+    resetScrollRegion();
+    process.stdout.write('\x1b[2J\x1b[H');
   }
+}
+
+function enterTui() {
+  if (!output.isTTY || tuiActive) return;
+
+  tuiActive = true;
+  output.write('\x1b[?1049h\x1b[?25h\x1b[2J\x1b[H');
+}
+
+function leaveTui() {
+  if (!output.isTTY || !tuiActive) return;
+
+  resetScrollRegion();
+  output.write('\x1b[?25h\x1b[?1049l');
+  tuiActive = false;
+}
+
+function pinBodyRegion() {
+  if (!output.isTTY || !tuiActive) return;
+
+  const rows = output.rows || 40;
+  if (rows <= BODY_START_ROW + 2) {
+    resetScrollRegion();
+    return;
+  }
+
+  output.write(`\x1b[${BODY_START_ROW};${rows}r\x1b[${BODY_START_ROW};1H`);
+}
+
+function resetScrollRegion() {
+  if (!output.isTTY || !tuiActive) return;
+  output.write('\x1b[r');
 }
 
 function stopChildren() {
@@ -962,7 +1011,31 @@ function muted(text) {
 }
 
 function panel(text) {
-  return style(text, 'panel');
+  return style(text, 'darkRed');
+}
+
+function blood(text) {
+  return style(text, 'blood');
+}
+
+function darkRed(text) {
+  return style(text, 'darkRed');
+}
+
+function inferno(text) {
+  return style(text, 'inferno');
+}
+
+function ember(text) {
+  return style(text, 'ember');
+}
+
+function ash(text) {
+  return style(text, 'ash');
+}
+
+function bone(text) {
+  return style(text, 'bone');
 }
 
 process.on('SIGINT', () => {
