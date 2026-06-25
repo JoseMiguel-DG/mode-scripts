@@ -1,10 +1,9 @@
-import { spawn } from 'node:child_process';
 import { appendFile, mkdir } from 'node:fs/promises';
 import path from 'node:path';
 import process from 'node:process';
 import WebSocket from 'ws';
+import { DEFAULT_SOUND_PATH, playSoundAsync } from './platform.js';
 
-const DEFAULT_SOUND_PATH = 'C:\\Windows\\Media\\Alarm01.wav';
 const DEFAULT_LOG_FILE = path.resolve('logs', 'giveaway-alerts.ndjson');
 const DEFAULT_THRESHOLD = 4;
 const DEFAULT_WINDOW_SECONDS = 12;
@@ -145,7 +144,7 @@ Opciones:
   --cooldown-seconds     Segundos antes de repetir canal/palabra. Default: ${DEFAULT_COOLDOWN_SECONDS}.
   --min-length           Longitud minima de palabra. Default: ${DEFAULT_MIN_LENGTH}.
   --max-length           Longitud maxima de palabra. Default: ${DEFAULT_MAX_LENGTH}.
-  --sound                Ruta del .wav local. Default: ${DEFAULT_SOUND_PATH}.
+  --sound                Ruta del archivo de sonido. Default: ${DEFAULT_SOUND_PATH}.
   --log-file             Archivo NDJSON de alertas. Default: ${DEFAULT_LOG_FILE}.
   --sound-test           Prueba el sonido y sale.
   --test                 Simula mensajes sin conectar a Twitch.
@@ -391,85 +390,6 @@ function normalizeGiveawayCandidate(text) {
   if (!/^[!#]?[a-z0-9_-]+$/.test(normalized)) return null;
 
   return normalized;
-}
-
-function playSoundAsync(soundPath) {
-  const command = buildSoundCommand(soundPath);
-
-  try {
-    const child = spawn('powershell.exe', [
-      '-NoProfile',
-      '-NonInteractive',
-      '-ExecutionPolicy',
-      'Bypass',
-      '-Command',
-      command
-    ], {
-      windowsHide: true,
-      stdio: ['ignore', 'ignore', 'pipe']
-    });
-
-    let stderr = '';
-    child.stderr.on('data', (chunk) => {
-      stderr += chunk.toString();
-    });
-
-    child.on('error', (error) => {
-      console.error(`[sound] No se pudo reproducir sonido: ${error.message}`);
-    });
-
-    child.on('close', (exitCode) => {
-      if (exitCode !== 0) {
-        console.error(`[sound] PowerShell salio con codigo ${exitCode}: ${stderr.trim() || 'sin detalle'}`);
-      } else if (stderr.trim()) {
-        console.error(`[sound] Aviso: ${stderr.trim()}`);
-      }
-    });
-  } catch (error) {
-    console.error(`[sound] No se pudo iniciar sonido: ${error.message}`);
-  }
-}
-
-function buildSoundCommand(soundPath) {
-  const escapedPath = String(soundPath).replace(/'/g, "''");
-
-  return [
-    "$ErrorActionPreference = 'Continue'",
-    `$path = '${escapedPath}'`,
-    '$played = $false',
-    'try {',
-    '  if (Test-Path -LiteralPath $path) {',
-    '    $player = New-Object System.Media.SoundPlayer',
-    '    $player.SoundLocation = $path',
-    '    $player.Load()',
-    '    $player.PlaySync()',
-    '    $played = $true',
-    '  } else {',
-    '    [Console]::Error.WriteLine("No existe el WAV: " + $path)',
-    '  }',
-    '} catch {',
-    '  [Console]::Error.WriteLine("SoundPlayer fallo: " + $_.Exception.Message)',
-    '}',
-    'if (-not $played) {',
-    '  try {',
-    '    [System.Media.SystemSounds]::Exclamation.Play()',
-    '    Start-Sleep -Milliseconds 350',
-    '    $played = $true',
-    '  } catch {',
-    '    [Console]::Error.WriteLine("SystemSounds fallo: " + $_.Exception.Message)',
-    '  }',
-    '}',
-    'if (-not $played) {',
-    '  try {',
-    '    [Console]::Beep(1200, 180)',
-    '    [Console]::Beep(1600, 180)',
-    '    $played = $true',
-    '  } catch {',
-    '    [Console]::Error.WriteLine("Console.Beep fallo: " + $_.Exception.Message)',
-    '  }',
-    '}',
-    'if (-not $played) { exit 1 }'
-  ].join('; ');
 }
 
 async function runSoundTest() {

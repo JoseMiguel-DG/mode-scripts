@@ -1,12 +1,10 @@
-import clipboard from 'clipboardy';
-import { spawn } from 'node:child_process';
 import { appendFile, mkdir } from 'node:fs/promises';
 import { createServer } from 'node:http';
 import path from 'node:path';
 import process from 'node:process';
 import WebSocket, { WebSocketServer } from 'ws';
+import { DEFAULT_SOUND_PATH, copyTextToClipboard, playSoundAsync } from './platform.js';
 
-const DEFAULT_SOUND_PATH = 'C:\\Windows\\Media\\Alarm01.wav';
 const DEFAULT_DEDUP_MINUTES = 10;
 const DEFAULT_LOG_FILE = path.resolve('logs', 'codes.ndjson');
 const DEFAULT_FAILURE_LOG_FILE = path.resolve('logs', 'keydrop-failures.ndjson');
@@ -137,7 +135,7 @@ Opciones:
   --channel, -c          Canal de Twitch sin #.
   --channels             Varios canales separados por coma o espacios.
   --dedup-minutes       Minutos para ignorar codigos repetidos. Default: ${DEFAULT_DEDUP_MINUTES}.
-  --sound               Ruta del .wav local. Default: ${DEFAULT_SOUND_PATH}.
+  --sound               Ruta del archivo de sonido. Default: ${DEFAULT_SOUND_PATH}.
   --log-file            Archivo NDJSON de log. Default: ${DEFAULT_LOG_FILE}.
   --failure-log-file    Archivo NDJSON de fallos KeyDrop. Default: ${DEFAULT_FAILURE_LOG_FILE}.
   --sound-test          Prueba el sonido y sale.
@@ -359,7 +357,7 @@ async function handleCode(code, text, source) {
 
   let copyResult;
   try {
-    copyResult = await copyToClipboard(code);
+    copyResult = await copyTextToClipboard(code);
   } catch (error) {
     seenCodes.delete(code);
     console.error(`[clipboard] No se pudo copiar ${code}. ${error.message}`);
@@ -533,129 +531,6 @@ function pruneDedup(now) {
       seenCodes.delete(code);
     }
   }
-}
-
-async function copyToClipboard(code) {
-  try {
-    await clipboard.write(code);
-    return { method: 'clipboardy' };
-  } catch (clipboardyError) {
-    try {
-      await copyWithPowerShell(code);
-      return { method: 'powershell fallback' };
-    } catch (fallbackError) {
-      throw new Error(`clipboardy fallo (${clipboardyError.message}); fallback PowerShell fallo (${fallbackError.message})`);
-    }
-  }
-}
-
-function copyWithPowerShell(code) {
-  return new Promise((resolve, reject) => {
-    const command = `Set-Clipboard -Value "${code}"`;
-    const child = spawn('powershell.exe', [
-      '-NoProfile',
-      '-NonInteractive',
-      '-ExecutionPolicy',
-      'Bypass',
-      '-Command',
-      command
-    ], {
-      windowsHide: true,
-      stdio: ['ignore', 'ignore', 'pipe']
-    });
-
-    let stderr = '';
-    child.stderr.on('data', (chunk) => {
-      stderr += chunk.toString();
-    });
-    child.on('error', reject);
-    child.on('close', (exitCode) => {
-      if (exitCode === 0) {
-        resolve();
-      } else {
-        reject(new Error(stderr.trim() || `PowerShell salio con codigo ${exitCode}`));
-      }
-    });
-  });
-}
-
-function playSoundAsync(soundPath) {
-  const command = buildSoundCommand(soundPath);
-
-  try {
-    const child = spawn('powershell.exe', [
-      '-NoProfile',
-      '-NonInteractive',
-      '-ExecutionPolicy',
-      'Bypass',
-      '-Command',
-      command
-    ], {
-      windowsHide: true,
-      stdio: ['ignore', 'ignore', 'pipe']
-    });
-
-    let stderr = '';
-    child.stderr.on('data', (chunk) => {
-      stderr += chunk.toString();
-    });
-
-    child.on('error', (error) => {
-      console.error(`[sound] No se pudo reproducir sonido: ${error.message}`);
-    });
-
-    child.on('close', (exitCode) => {
-      if (exitCode !== 0) {
-        console.error(`[sound] PowerShell salio con codigo ${exitCode}: ${stderr.trim() || 'sin detalle'}`);
-      } else if (stderr.trim()) {
-        console.error(`[sound] Aviso: ${stderr.trim()}`);
-      }
-    });
-  } catch (error) {
-    console.error(`[sound] No se pudo iniciar sonido: ${error.message}`);
-  }
-}
-
-function buildSoundCommand(soundPath) {
-  const escapedPath = String(soundPath).replace(/'/g, "''");
-
-  return [
-    "$ErrorActionPreference = 'Continue'",
-    `$path = '${escapedPath}'`,
-    '$played = $false',
-    'try {',
-    '  if (Test-Path -LiteralPath $path) {',
-    '    $player = New-Object System.Media.SoundPlayer',
-    '    $player.SoundLocation = $path',
-    '    $player.Load()',
-    '    $player.PlaySync()',
-    '    $played = $true',
-    '  } else {',
-    '    [Console]::Error.WriteLine("No existe el WAV: " + $path)',
-    '  }',
-    '} catch {',
-    '  [Console]::Error.WriteLine("SoundPlayer fallo: " + $_.Exception.Message)',
-    '}',
-    'if (-not $played) {',
-    '  try {',
-    '    [System.Media.SystemSounds]::Exclamation.Play()',
-    '    Start-Sleep -Milliseconds 350',
-    '    $played = $true',
-    '  } catch {',
-    '    [Console]::Error.WriteLine("SystemSounds fallo: " + $_.Exception.Message)',
-    '  }',
-    '}',
-    'if (-not $played) {',
-    '  try {',
-    '    [Console]::Beep(1200, 180)',
-    '    [Console]::Beep(1600, 180)',
-    '    $played = $true',
-    '  } catch {',
-    '    [Console]::Error.WriteLine("Console.Beep fallo: " + $_.Exception.Message)',
-    '  }',
-    '}',
-    'if (-not $played) { exit 1 }'
-  ].join('; ');
 }
 
 async function runSoundTest() {

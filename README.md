@@ -1,6 +1,6 @@
 # Twitch Code Clipboard / Mode-Scripts
 
-Herramienta Node.js para Windows que escucha chats publicos de Twitch por IRC WebSocket.
+Herramienta Node.js para Windows y macOS que escucha chats publicos de Twitch por IRC WebSocket.
 
 Tiene tres piezas:
 
@@ -12,15 +12,71 @@ El bot no escribe en el chat. Usa conexion anonima de lectura tipo `justinfan...
 
 ## Requisitos
 
-- Windows.
+- Windows 10/11 o macOS.
 - Node.js 18.17 o superior.
+- Git si quieres clonar/actualizar desde GitHub.
 - Acceso al chat publico de los canales de Twitch.
 
-Instalacion:
+## Instalacion
+
+Desde cero:
 
 ```powershell
+git clone https://github.com/JoseMiguel-DG/mode-scripts.git
+cd mode-scripts
 npm install
 ```
+
+En macOS es el mismo flujo desde Terminal:
+
+```bash
+git clone https://github.com/JoseMiguel-DG/mode-scripts.git
+cd mode-scripts
+npm install
+```
+
+Para actualizar en cualquiera de los dos equipos:
+
+```powershell
+git pull
+npm install
+```
+
+`npm install` solo hace falta repetirlo cuando cambien dependencias, pero no hace daño ejecutarlo despues de `git pull`.
+
+## Usar el Mismo Repo en Windows y macOS
+
+El repositorio es el mismo para los dos sistemas. La diferencia la decide el programa en runtime con `process.platform`.
+
+En Windows:
+
+- portapapeles: `clipboardy`, fallback `Set-Clipboard`;
+- sonido: PowerShell + sonidos del sistema;
+- TUI: PowerShell, Windows Terminal o similar.
+
+En macOS:
+
+- portapapeles: `clipboardy`, fallback `pbcopy`;
+- sonido: `afplay`, fallback `osascript`;
+- TUI: Terminal, iTerm2 o similar.
+
+Flujo recomendado:
+
+```bash
+git clone https://github.com/JoseMiguel-DG/mode-scripts.git
+cd mode-scripts
+npm install
+npm run menu
+```
+
+Para sincronizar cambios entre equipos:
+
+```bash
+git pull
+npm install
+```
+
+La configuracion personal del menu vive en `config/mode-scripts.json` y no se sube al repositorio. Eso permite tener canales distintos en Windows y macOS si quieres.
 
 ## Funcionamiento General
 
@@ -58,7 +114,7 @@ Arranque recomendado:
 npm run menu
 ```
 
-Ejecutalo directamente en una terminal interactiva de PowerShell. No esta pensado para usarse por pipe o redireccion de entrada.
+Ejecutalo directamente en una terminal interactiva: PowerShell en Windows o Terminal en macOS. No esta pensado para usarse por pipe o redireccion de entrada.
 
 El menu muestra un banner `Mode-Scripts v1` y guarda configuracion en:
 
@@ -149,7 +205,7 @@ Opciones:
 - `--channel`: canal de Twitch sin `#`.
 - `--channels`: varios canales separados por coma o espacios.
 - `--dedup-minutes`: minutos para ignorar codigos repetidos. Por defecto: `10`.
-- `--sound`: ruta del archivo `.wav`. Por defecto: `C:\Windows\Media\Alarm01.wav`.
+- `--sound`: ruta del archivo de sonido. Por defecto: `C:\Windows\Media\Alarm01.wav` en Windows y `/System/Library/Sounds/Glass.aiff` en macOS.
 - `--log-file`: archivo NDJSON de codigos. Por defecto: `logs/codes.ndjson`.
 - `--failure-log-file`: archivo NDJSON de fallos KeyDrop. Por defecto: `logs/keydrop-failures.ndjson`.
 - `--sound-test`: prueba el sonido y sale.
@@ -222,7 +278,7 @@ Opciones:
 - `--cooldown-seconds`: segundos antes de repetir canal/palabra. Por defecto: `90`.
 - `--min-length`: longitud minima de palabra. Por defecto: `3`.
 - `--max-length`: longitud maxima de palabra. Por defecto: `32`.
-- `--sound`: ruta del archivo `.wav`. Por defecto: `C:\Windows\Media\Alarm01.wav`.
+- `--sound`: ruta del archivo de sonido. Por defecto: `C:\Windows\Media\Alarm01.wav` en Windows y `/System/Library/Sounds/Glass.aiff` en macOS.
 - `--log-file`: archivo NDJSON de alertas. Por defecto: `logs/giveaway-alerts.ndjson`.
 - `--sound-test`: prueba el sonido y sale.
 - `--test`: simula una alerta sin conectar a Twitch.
@@ -259,6 +315,12 @@ Probar sonido con otro WAV:
 npm run sound-test -- --sound "C:\Windows\Media\Alarm05.wav"
 ```
 
+Ejemplo en macOS:
+
+```bash
+npm run sound-test -- --sound "/System/Library/Sounds/Ping.aiff"
+```
+
 Probar sonido del detector de sorteos:
 
 ```powershell
@@ -267,9 +329,9 @@ npm run giveaways -- --sound-test
 
 El programa intenta:
 
-1. Reproducir el `.wav` configurado.
-2. Usar sonido del sistema de Windows.
-3. Usar `Console.Beep`.
+1. Reproducir el archivo configurado.
+2. En Windows, usar sonidos del sistema y `Console.Beep` como fallback.
+3. En macOS, usar `afplay` y `osascript -e "beep 2"` como fallback.
 
 ## Modo de Prueba
 
@@ -386,7 +448,7 @@ Fallos KeyDrop:
 logs/keydrop-failures.ndjson
 ```
 
-Ver logs en PowerShell:
+Ver logs desde terminal:
 
 ```powershell
 Get-Content .\logs\codes.ndjson
@@ -396,19 +458,25 @@ Get-Content .\logs\keydrop-failures.ndjson
 
 Los logs no guardan cookies ni cabeceras sensibles.
 
-## Latencia
+## Portapapeles y Latencia
 
 La herramienta usa WebSocket directo al IRC de Twitch y procesa solo mensajes `PRIVMSG`.
 
 En codigos, la prioridad es copiar al portapapeles. El sonido, el puente y el log se lanzan despues o en paralelo para no bloquear mas de lo necesario.
 
-Si `clipboardy` falla en Windows, se usa fallback:
+Primero intenta copiar con `clipboardy`. Si falla, usa fallback por sistema:
 
 ```powershell
 Set-Clipboard -Value "CODIGO"
 ```
 
-## AutoHotkey Opcional
+En macOS usa:
+
+```bash
+pbcopy
+```
+
+## AutoHotkey Opcional Solo Windows
 
 El archivo `manual-hotkey.ahk` requiere AutoHotkey v2. No reclama nada por si solo: necesitas pulsar manualmente `F8`.
 
