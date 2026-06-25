@@ -2,11 +2,13 @@
   "mode": "codes-giveaways",
   "codeChannels": [
     "v1nchenso7",
-    "tokioawp"
+    "tokioawp",
+    "hamuite"
   ],
   "giveawayChannels": [
     "v1nchenso7",
-    "tokioawp"
+    "tokioawp",
+    "hamuite"
   ],
   "keydropBridge": true,
   "giveawayThreshold": 4,
