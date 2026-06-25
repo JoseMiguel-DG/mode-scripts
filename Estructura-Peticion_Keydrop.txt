@@ -1,0 +1,57 @@
+(async () => {
+  const giftcardCode = "BE9D-EDF2-2DA6-5555";
+
+  const formData = new FormData();
+  formData.append("method", "giftcard-kinguin");
+  formData.append("code", giftcardCode);
+
+  try {
+    const response = await fetch("https://key-drop.com/es/Pay/", {
+      method: "POST",
+      body: formData,
+      credentials: "include"
+    });
+
+    const contentType = response.headers.get("content-type") || "";
+    const rawText = await response.text();
+
+    let result;
+    if (contentType.includes("application/json")) {
+      try {
+        result = JSON.parse(rawText);
+      } catch {
+        result = null;
+      }
+    }
+
+    console.log("HTTP status:", response.status);
+    console.log("Respuesta cruda:", rawText);
+
+    if (!response.ok) {
+      console.log("❌ Error HTTP:", response.status);
+      return;
+    }
+
+    if (result) {
+      console.log("Respuesta JSON:", result);
+
+      if (
+        result.status === true ||
+        result.success === true ||
+        result.status === "success"
+      ) {
+        console.log("✅ Gift Card canjeada con éxito.");
+      } else {
+        console.log(
+          "❌ Error al canjear:",
+          result.message || result.error || result.msg || "Código inválido, usado o proveedor incorrecto."
+        );
+      }
+    } else {
+      console.log("⚠️ La respuesta no era JSON. Revisa el texto crudo de arriba.");
+    }
+
+  } catch (error) {
+    console.error("Error en la petición:", error);
+  }
+})();

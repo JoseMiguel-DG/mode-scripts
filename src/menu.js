@@ -1,0 +1,859 @@
+import { spawn } from 'node:child_process';
+import { readFile, writeFile, mkdir } from 'node:fs/promises';
+import path from 'node:path';
+import process from 'node:process';
+import { createInterface } from 'node:readline/promises';
+import { stdin as input, stdout as output } from 'node:process';
+
+const APP_TITLE = 'Mode-Scripts v1';
+const CONFIG_FILE = path.resolve('config', 'mode-scripts.json');
+const DEFAULT_THRESHOLD = 4;
+const DEFAULT_WINDOW_SECONDS = 12;
+const DEFAULT_COOLDOWN_SECONDS = 90;
+const LOG_LINES = 13;
+const MODES = new Set(['codes', 'codes-giveaways', 'giveaways']);
+const MODE_LABELS = {
+  codes: 'Solo codigos',
+  'codes-giveaways': 'Codigos + deteccion de sorteos',
+  giveaways: 'Solo deteccion de sorteos'
+};
+const DEFAULT_CONFIG = {
+  mode: 'codes-giveaways',
+  codeChannels: [],
+  giveawayChannels: [],
+  keydropBridge: false,
+  giveawayThreshold: DEFAULT_THRESHOLD,
+  giveawayWindowSeconds: DEFAULT_WINDOW_SECONDS,
+  giveawayCooldownSeconds: DEFAULT_COOLDOWN_SECONDS
+};
+const childProcesses = new Set();
+let dashboardTimer = null;
+let dashboardState = null;
+
+const colorEnabled = process.stdout.isTTY && !process.env.NO_COLOR;
+const ansi = {
+  reset: '\x1b[0m',
+  bold: '\x1b[1m',
+  dim: '\x1b[2m',
+  red: '\x1b[31m',
+  green: '\x1b[32m',
+  yellow: '\x1b[33m',
+  blue: '\x1b[34m',
+  magenta: '\x1b[35m',
+  cyan: '\x1b[36m',
+  gray: '\x1b[90m'
+};
+
+if (process.argv.slice(2).some((arg) => arg === '--help' || arg === '-h')) {
+  printHelp();
+  process.exit(0);
+}
+
+if (!input.isTTY || !output.isTTY) {
+  console.error('El menu TUI necesita una terminal interactiva. Ejecuta: npm run menu');
+  process.exit(1);
+}
+
+const rl = createInterface({ input, output });
+
+try {
+  const config = await loadConfig();
+  const shouldLaunch = await mainMenu(config);
+  await rl.close();
+
+  if (!shouldLaunch) {
+    process.exit(0);
+  }
+} catch (error) {
+  await rl.close();
+  console.error(style(`No se pudo iniciar el menu: ${error.message}`, 'red'));
+  process.exit(1);
+}
+
+async function mainMenu(config) {
+  while (true) {
+    renderHome(config);
+    const choice = await askChoice('Selecciona opcion [1]: ', ['1', '2', '3', '4', '5', '6', '7', '8'], '1');
+
+    if (choice === '1') {
+      const session = await buildSessionConfig(config);
+      if (!session) {
+        await pause();
+        continue;
+      }
+
+      startDashboard(session);
+      return true;
+    }
+
+    if (choice === '2') {
+      await changeMode(config);
+    } else if (choice === '3') {
+      await manageCodeChannel(config);
+    } else if (choice === '4') {
+      await manageGiveawayChannels(config);
+    } else if (choice === '5') {
+      await manageGiveawaySettings(config);
+    } else if (choice === '6') {
+      config.keydropBridge = !config.keydropBridge;
+      await saveConfig(config);
+      printStatus(`KeyDrop bridge: ${config.keydropBridge ? 'activado' : 'desactivado'}.`);
+      await pause();
+    } else if (choice === '7') {
+      renderConfigPath();
+      await pause();
+    } else if (choice === '8') {
+      return false;
+    }
+  }
+}
+
+function renderHome(config) {
+  clearScreen();
+  printBanner();
+  printBox('CONFIGURACION GUARDADA', [
+    `Modo: ${MODE_LABELS[config.mode] || config.mode}`,
+    `Canales codigos: ${formatChannels(config.codeChannels) || dim('sin configurar')}`,
+    `Canales sorteos: ${formatChannels(config.giveawayChannels) || dim('sin configurar')}`,
+    `Regla sorteos: ${config.giveawayThreshold} usuarios / ${config.giveawayWindowSeconds}s`,
+    `Cooldown sorteos: ${config.giveawayCooldownSeconds}s`,
+    `KeyDrop bridge: ${config.keydropBridge ? green('ON') : dim('OFF')}`,
+    `Config: ${CONFIG_FILE}`
+  ]);
+  printBox('MENU', [
+    `${cyan('1')}  Arrancar con configuracion guardada`,
+    `${cyan('2')}  Cambiar modo de arranque`,
+    `${cyan('3')}  Anadir / eliminar / modificar canales de codigos`,
+    `${cyan('4')}  Anadir / eliminar / modificar canales de sorteos`,
+    `${cyan('5')}  Ajustes del detector de sorteos`,
+    `${cyan('6')}  Activar/desactivar KeyDrop bridge`,
+    `${cyan('7')}  Ver ruta de configuracion`,
+    `${cyan('8')}  Salir`
+  ]);
+}
+
+async function changeMode(config) {
+  clearScreen();
+  printBanner();
+  printBox('MODO DE ARRANQUE', [
+    `${cyan('1')}  Solo codigos`,
+    `${cyan('2')}  Codigos + deteccion de sorteos`,
+    `${cyan('3')}  Solo deteccion de sorteos`
+  ]);
+
+  const choice = await askChoice('Nuevo modo [2]: ', ['1', '2', '3'], '2');
+  config.mode = choice === '1' ? 'codes' : choice === '2' ? 'codes-giveaways' : 'giveaways';
+  await saveConfig(config);
+  printStatus(`Modo guardado: ${MODE_LABELS[config.mode]}.`);
+  await pause();
+}
+
+async function manageCodeChannel(config) {
+  while (true) {
+    clearScreen();
+    printBanner();
+    const channelRows = config.codeChannels.length > 0
+      ? config.codeChannels.map((channel, index) => `${String(index + 1).padStart(2, '0')}. #${channel}`)
+      : [dim('No hay canales de codigos guardados.')];
+
+    printBox('CANALES DE CODIGOS', [
+      ...channelRows,
+      '',
+      `${cyan('1')}  Anadir canal(es)`,
+      `${cyan('2')}  Eliminar canal`,
+      `${cyan('3')}  Reemplazar lista completa`,
+      `${cyan('4')}  Borrar todos`,
+      `${cyan('5')}  Volver`
+    ]);
+
+    const choice = await askChoice('Selecciona opcion [1]: ', ['1', '2', '3', '4', '5'], '1');
+    if (choice === '1') {
+      const channels = await askChannels('Canales a anadir separados por coma: ', '');
+      config.codeChannels = mergeChannels(config.codeChannels, channels);
+      await saveConfig(config);
+      printStatus(`Canales guardados: ${formatChannels(config.codeChannels)}.`);
+      await pause();
+    } else if (choice === '2') {
+      if (config.codeChannels.length === 0) {
+        printStatus('No hay canales para eliminar.');
+        await pause();
+        continue;
+      }
+
+      const target = (await rl.question(promptText('Numero o nombre de canal a eliminar: '))).trim();
+      const removed = removeChannel(config.codeChannels, target);
+      if (removed) {
+        await saveConfig(config);
+        printStatus(`Canal eliminado: #${removed}.`);
+      } else {
+        printStatus('No se encontro ese canal.');
+      }
+      await pause();
+    } else if (choice === '3') {
+      config.codeChannels = await askChannels('Nueva lista completa separada por coma: ', '');
+      await saveConfig(config);
+      printStatus(`Lista reemplazada: ${formatChannels(config.codeChannels)}.`);
+      await pause();
+    } else if (choice === '4') {
+      config.codeChannels = [];
+      await saveConfig(config);
+      printStatus('Canales de codigos borrados.');
+      await pause();
+    } else {
+      return;
+    }
+  }
+}
+
+async function manageGiveawayChannels(config) {
+  while (true) {
+    clearScreen();
+    printBanner();
+    const channelRows = config.giveawayChannels.length > 0
+      ? config.giveawayChannels.map((channel, index) => `${String(index + 1).padStart(2, '0')}. #${channel}`)
+      : [dim('No hay canales de sorteos guardados.')];
+
+    printBox('CANALES DE SORTEOS', [
+      ...channelRows,
+      '',
+      `${cyan('1')}  Anadir canal(es)`,
+      `${cyan('2')}  Eliminar canal`,
+      `${cyan('3')}  Reemplazar lista completa`,
+      `${cyan('4')}  Borrar todos`,
+      `${cyan('5')}  Volver`
+    ]);
+
+    const choice = await askChoice('Selecciona opcion [1]: ', ['1', '2', '3', '4', '5'], '1');
+    if (choice === '1') {
+      const channels = await askChannels('Canales a anadir separados por coma: ', '');
+      config.giveawayChannels = mergeChannels(config.giveawayChannels, channels);
+      await saveConfig(config);
+      printStatus(`Canales guardados: ${formatChannels(config.giveawayChannels)}.`);
+      await pause();
+    } else if (choice === '2') {
+      if (config.giveawayChannels.length === 0) {
+        printStatus('No hay canales para eliminar.');
+        await pause();
+        continue;
+      }
+
+      const target = (await rl.question('Numero o nombre de canal a eliminar: ')).trim();
+      const removed = removeChannel(config.giveawayChannels, target);
+      if (removed) {
+        await saveConfig(config);
+        printStatus(`Canal eliminado: #${removed}.`);
+      } else {
+        printStatus('No se encontro ese canal.');
+      }
+      await pause();
+    } else if (choice === '3') {
+      config.giveawayChannels = await askChannels('Nueva lista completa separada por coma: ', '');
+      await saveConfig(config);
+      printStatus(`Lista reemplazada: ${formatChannels(config.giveawayChannels)}.`);
+      await pause();
+    } else if (choice === '4') {
+      config.giveawayChannels = [];
+      await saveConfig(config);
+      printStatus('Canales de sorteos borrados.');
+      await pause();
+    } else {
+      return;
+    }
+  }
+}
+
+async function manageGiveawaySettings(config) {
+  clearScreen();
+  printBanner();
+  printBox('AJUSTES DE SORTEOS', [
+    `Usuarios distintos: ${config.giveawayThreshold}`,
+    `Ventana: ${config.giveawayWindowSeconds}s`,
+    `Cooldown: ${config.giveawayCooldownSeconds}s`
+  ]);
+
+  config.giveawayThreshold = await askInteger(`Usuarios distintos [${config.giveawayThreshold}]: `, config.giveawayThreshold, 2, 50);
+  config.giveawayWindowSeconds = await askInteger(`Ventana en segundos [${config.giveawayWindowSeconds}]: `, config.giveawayWindowSeconds, 1, 300);
+  config.giveawayCooldownSeconds = await askInteger(`Cooldown en segundos [${config.giveawayCooldownSeconds}]: `, config.giveawayCooldownSeconds, 0, 3600);
+  await saveConfig(config);
+  printStatus('Ajustes de sorteos guardados.');
+  await pause();
+}
+
+function renderConfigPath() {
+  clearScreen();
+  printBanner();
+  printBox('CONFIG FILE', [
+    CONFIG_FILE,
+    '',
+    'Puedes editar este JSON manualmente si quieres.',
+    'El menu lo vuelve a cargar cada vez que arrancas npm run menu.'
+  ]);
+}
+
+async function buildSessionConfig(config) {
+  if (modeUsesCodes(config.mode) && config.codeChannels.length === 0) {
+    printStatus('Faltan canales de codigos para este modo.');
+    config.codeChannels = await askChannels('Canales de codigos separados por coma: ', '');
+    await saveConfig(config);
+  }
+
+  if (modeUsesGiveaways(config.mode) && config.giveawayChannels.length === 0) {
+    if (config.codeChannels.length > 0) {
+      const useCodeChannel = await askYesNo(`No hay canales de sorteos. Usar los canales de codigos (${formatChannels(config.codeChannels)})? [S/n]: `, true);
+      if (useCodeChannel) {
+        config.giveawayChannels = [...config.codeChannels];
+      }
+    }
+
+    if (config.giveawayChannels.length === 0) {
+      config.giveawayChannels = await askChannels('Canales de sorteos separados por coma: ', '');
+    }
+
+    await saveConfig(config);
+  }
+
+  const processes = [];
+  if (modeUsesCodes(config.mode)) {
+    const args = ['--channels', config.codeChannels.join(',')];
+    if (config.keydropBridge) {
+      args.push('--keydrop-bridge');
+    }
+
+    processes.push({
+      key: 'codigos',
+      title: 'Code Clipboard',
+      script: 'src/index.js',
+      args,
+      channels: config.codeChannels,
+      connectedChannels: new Set(),
+      status: 'starting',
+      pid: null
+    });
+  }
+
+  if (modeUsesGiveaways(config.mode)) {
+    processes.push({
+      key: 'sorteos',
+      title: 'Giveaway Listener',
+      script: 'src/giveaways.js',
+      args: [
+        '--channels',
+        config.giveawayChannels.join(','),
+        '--threshold',
+        String(config.giveawayThreshold),
+        '--window-seconds',
+        String(config.giveawayWindowSeconds),
+        '--cooldown-seconds',
+        String(config.giveawayCooldownSeconds)
+      ],
+      channels: config.giveawayChannels,
+      connectedChannels: new Set(),
+      status: 'starting',
+      pid: null
+    });
+  }
+
+  if (processes.length === 0) {
+    printStatus('No hay procesos para arrancar.');
+    return null;
+  }
+
+  return {
+    mode: config.mode,
+    keydropBridge: config.keydropBridge,
+    startedAt: Date.now(),
+    processes,
+    logs: []
+  };
+}
+
+function startDashboard(session) {
+  dashboardState = session;
+  renderDashboard();
+
+  for (const childConfig of session.processes) {
+    startChild(childConfig);
+  }
+
+  dashboardTimer = setInterval(renderDashboard, 1000);
+}
+
+function startChild(childConfig) {
+  const scriptPath = path.resolve(childConfig.script);
+  const child = spawn(process.execPath, [scriptPath, ...childConfig.args], {
+    windowsHide: true,
+    stdio: ['ignore', 'pipe', 'pipe']
+  });
+
+  childConfig.pid = child.pid;
+  childConfig.status = 'booting';
+  childProcesses.add(child);
+  prefixStream(child.stdout, childConfig, false);
+  prefixStream(child.stderr, childConfig, true);
+
+  child.on('exit', (code, signal) => {
+    childProcesses.delete(child);
+    childConfig.status = signal ? `stopped:${signal}` : `exit:${code}`;
+    addLog(childConfig.key, `Proceso terminado (${signal ? `signal ${signal}` : `codigo ${code}`}).`, code ? 'error' : 'info');
+    renderDashboard();
+
+    if (childProcesses.size === 0) {
+      clearInterval(dashboardTimer);
+      dashboardTimer = null;
+      setTimeout(() => process.exit(code || 0), 500);
+    }
+  });
+
+  child.on('error', (error) => {
+    childProcesses.delete(child);
+    childConfig.status = 'error';
+    addLog(childConfig.key, `No se pudo arrancar: ${error.message}`, 'error');
+    renderDashboard();
+  });
+}
+
+function prefixStream(stream, childConfig, isError) {
+  let buffered = '';
+
+  stream.on('data', (chunk) => {
+    buffered += chunk.toString('utf8');
+    const lines = buffered.split(/\r?\n/);
+    buffered = lines.pop() || '';
+
+    for (const line of lines) {
+      if (line) {
+        handleChildLine(childConfig, line, isError);
+      }
+    }
+  });
+
+  stream.on('end', () => {
+    if (buffered) {
+      handleChildLine(childConfig, buffered, isError);
+      buffered = '';
+    }
+  });
+}
+
+function handleChildLine(childConfig, line, isError) {
+  const joinedChannel = line.match(/Join OK #([a-z0-9_]+)/i)?.[1];
+  if (joinedChannel) {
+    childConfig.connectedChannels.add(normalizeChannel(joinedChannel));
+    childConfig.status = 'connected';
+  } else if (line.includes('Sesion IRC abierta')) {
+    childConfig.status = 'joining';
+  } else if (line.includes('Reconexion automatica')) {
+    childConfig.status = 'reconnecting';
+    childConfig.connectedChannels.clear();
+  } else if (line.includes('Conexion cerrada') || line.includes('Error de conexion')) {
+    childConfig.status = 'disconnected';
+  } else if (line.includes('Puente KeyDrop escuchando')) {
+    childConfig.bridgeStatus = 'online';
+  }
+
+  let level = isError ? 'error' : 'info';
+  if (line.includes('[sorteo]') || line.includes('COPIADO')) {
+    level = 'hit';
+  } else if (joinedChannel) {
+    level = 'ok';
+  } else if (line.includes('Error') || line.includes('Fallo') || line.includes('cerrada')) {
+    level = 'error';
+  }
+
+  addLog(childConfig.key, line, level);
+  renderDashboard();
+}
+
+function renderDashboard() {
+  if (!dashboardState) return;
+
+  clearScreen();
+  printBanner();
+  printBox('RUNNING DASHBOARD', [
+    `Modo: ${MODE_LABELS[dashboardState.mode]}`,
+    `Uptime: ${formatDuration(Date.now() - dashboardState.startedAt)}`,
+    `KeyDrop bridge: ${dashboardState.keydropBridge ? green('ON') : dim('OFF')}`,
+    'Ctrl+C para detener todos los procesos.'
+  ]);
+
+  for (const processInfo of dashboardState.processes) {
+    printProcessBox(processInfo);
+  }
+
+  printLogBox(dashboardState.logs);
+}
+
+function printProcessBox(processInfo) {
+  const channelRows = processInfo.channels.map((channel) => {
+    const connected = processInfo.connectedChannels.has(channel);
+    return `${connected ? green('[OK]') : yellow('[WAIT]')} #${channel}`;
+  });
+
+  printBox(processInfo.title.toUpperCase(), [
+    `Estado: ${formatProcessStatus(processInfo.status)}${processInfo.pid ? `  PID: ${processInfo.pid}` : ''}`,
+    processInfo.bridgeStatus ? `Bridge: ${green(processInfo.bridgeStatus)}` : '',
+    ...channelRows
+  ].filter(Boolean));
+}
+
+function printLogBox(logs) {
+  const rows = logs.length > 0
+    ? logs.slice(-LOG_LINES).map((entry) => `${dim(entry.time)} ${style(`[${entry.source}]`, entry.level === 'error' ? 'red' : entry.level === 'hit' ? 'magenta' : entry.level === 'ok' ? 'green' : 'cyan')} ${formatLogLine(entry.line, entry.level)}`)
+    : [dim('Esperando eventos...')];
+
+  printBox('LIVE FEED', rows);
+}
+
+function addLog(source, line, level = 'info') {
+  if (!dashboardState) return;
+
+  dashboardState.logs.push({
+    time: formatClock(new Date()),
+    source,
+    line,
+    level
+  });
+
+  while (dashboardState.logs.length > LOG_LINES) {
+    dashboardState.logs.shift();
+  }
+}
+
+function formatProcessStatus(status) {
+  if (status === 'connected') return green('CONNECTED');
+  if (status === 'joining') return yellow('JOINING');
+  if (status === 'booting' || status === 'starting') return yellow('STARTING');
+  if (status === 'reconnecting') return yellow('RECONNECTING');
+  if (status === 'disconnected') return red('DISCONNECTED');
+  if (status === 'error' || status.startsWith('exit:1')) return red(status.toUpperCase());
+  if (status.startsWith('exit:') || status.startsWith('stopped:')) return dim(status.toUpperCase());
+  return status.toUpperCase();
+}
+
+function formatLogLine(line, level) {
+  if (level === 'error') return red(line);
+  if (level === 'hit') return magenta(line);
+  if (level === 'ok') return green(line);
+  return line;
+}
+
+async function loadConfig() {
+  try {
+    const raw = await readFile(CONFIG_FILE, 'utf8');
+    return normalizeConfig(JSON.parse(raw));
+  } catch (error) {
+    if (error.code !== 'ENOENT') {
+      console.error(style(`Aviso: no se pudo leer ${CONFIG_FILE}. Se usaran valores por defecto.`, 'yellow'));
+    }
+
+    const config = normalizeConfig(DEFAULT_CONFIG);
+    await saveConfig(config);
+    return config;
+  }
+}
+
+async function saveConfig(config) {
+  const normalized = normalizeConfig(config);
+  await mkdir(path.dirname(CONFIG_FILE), { recursive: true });
+  await writeFile(CONFIG_FILE, `${JSON.stringify(normalized, null, 2)}\n`, 'utf8');
+  Object.assign(config, normalized);
+}
+
+function normalizeConfig(config) {
+  const merged = {
+    ...DEFAULT_CONFIG,
+    ...(config && typeof config === 'object' ? config : {})
+  };
+
+  return {
+    mode: MODES.has(merged.mode) ? merged.mode : DEFAULT_CONFIG.mode,
+    codeChannels: normalizeChannels(
+      Array.isArray(merged.codeChannels)
+        ? merged.codeChannels.join(',')
+        : merged.codeChannels || merged.codeChannel
+    ),
+    giveawayChannels: normalizeChannels(Array.isArray(merged.giveawayChannels) ? merged.giveawayChannels.join(',') : merged.giveawayChannels),
+    keydropBridge: Boolean(merged.keydropBridge),
+    giveawayThreshold: clampInteger(merged.giveawayThreshold, 2, 50, DEFAULT_THRESHOLD),
+    giveawayWindowSeconds: clampInteger(merged.giveawayWindowSeconds, 1, 300, DEFAULT_WINDOW_SECONDS),
+    giveawayCooldownSeconds: clampInteger(merged.giveawayCooldownSeconds, 0, 3600, DEFAULT_COOLDOWN_SECONDS)
+  };
+}
+
+function modeUsesCodes(mode) {
+  return mode === 'codes' || mode === 'codes-giveaways';
+}
+
+function modeUsesGiveaways(mode) {
+  return mode === 'giveaways' || mode === 'codes-giveaways';
+}
+
+function removeChannel(channels, target) {
+  const normalized = normalizeChannel(target);
+  const numericIndex = Number(target) - 1;
+  let index = -1;
+
+  if (Number.isInteger(numericIndex) && numericIndex >= 0 && numericIndex < channels.length) {
+    index = numericIndex;
+  } else {
+    index = channels.findIndex((channel) => channel === normalized);
+  }
+
+  if (index === -1) return null;
+  const [removed] = channels.splice(index, 1);
+  return removed;
+}
+
+async function askChoice(question, allowed, fallback) {
+  while (true) {
+    const answer = (await rl.question(promptText(question))).trim() || fallback;
+    if (allowed.includes(answer)) return answer;
+    printStatus(`Opcion no valida. Usa: ${allowed.join(', ')}`, 'error');
+  }
+}
+
+async function askRequiredChannel(question) {
+  while (true) {
+    const channel = normalizeChannel(await rl.question(promptText(question)));
+    if (channel) return channel;
+    printStatus('Escribe un canal de Twitch sin #.', 'error');
+  }
+}
+
+async function askChannels(question, fallback) {
+  while (true) {
+    const raw = (await rl.question(promptText(question))).trim() || fallback;
+    const channels = normalizeChannels(raw);
+    if (channels.length > 0) return channels;
+    printStatus('Escribe uno o varios canales separados por coma, por ejemplo: canal1,canal2', 'error');
+  }
+}
+
+async function askInteger(question, fallback, min, max) {
+  while (true) {
+    const raw = (await rl.question(promptText(question))).trim();
+    if (!raw) return fallback;
+
+    const value = Number(raw);
+    if (Number.isInteger(value) && value >= min && value <= max) {
+      return value;
+    }
+
+    printStatus(`Escribe un numero entero entre ${min} y ${max}.`, 'error');
+  }
+}
+
+async function askYesNo(question, fallback) {
+  while (true) {
+    const raw = (await rl.question(promptText(question))).trim().toLowerCase();
+    if (!raw) return fallback;
+    if (['s', 'si', 'y', 'yes'].includes(raw)) return true;
+    if (['n', 'no'].includes(raw)) return false;
+    printStatus('Responde s o n.', 'error');
+  }
+}
+
+async function pause() {
+  await rl.question(dim('Enter para continuar...'));
+}
+
+function normalizeChannels(value) {
+  const unique = new Set();
+  const channels = [];
+
+  for (const part of String(value || '').split(/[,\s]+/)) {
+    const channel = normalizeChannel(part);
+    if (!channel || unique.has(channel)) continue;
+
+    unique.add(channel);
+    channels.push(channel);
+  }
+
+  return channels;
+}
+
+function mergeChannels(...lists) {
+  return normalizeChannels(lists.flat().join(','));
+}
+
+function normalizeChannel(channel) {
+  return String(channel || '')
+    .trim()
+    .replace(/^#/, '')
+    .toLowerCase();
+}
+
+function clampInteger(value, min, max, fallback) {
+  const parsed = Math.trunc(Number(value));
+  if (!Number.isFinite(parsed)) return fallback;
+  return Math.min(max, Math.max(min, parsed));
+}
+
+function formatOneChannel(channel) {
+  return channel ? `#${channel}` : dim('sin configurar');
+}
+
+function formatChannels(channels) {
+  return channels.map((channel) => `#${channel}`).join(', ');
+}
+
+function formatDuration(ms) {
+  const totalSeconds = Math.floor(ms / 1000);
+  const hours = Math.floor(totalSeconds / 3600);
+  const minutes = Math.floor((totalSeconds % 3600) / 60);
+  const seconds = totalSeconds % 60;
+  return [hours, minutes, seconds].map((part) => String(part).padStart(2, '0')).join(':');
+}
+
+function formatClock(date) {
+  return [
+    date.getHours(),
+    date.getMinutes(),
+    date.getSeconds()
+  ].map((part) => String(part).padStart(2, '0')).join(':');
+}
+
+function promptText(text) {
+  return style(`> ${text}`, 'cyan');
+}
+
+function printStatus(text, level = 'info') {
+  const color = level === 'error' ? 'red' : level === 'ok' ? 'green' : 'yellow';
+  console.log(style(`:: ${text}`, color));
+}
+
+function printHelp() {
+  printBanner();
+  console.log(`
+Uso:
+  npm run menu
+
+Menu TUI:
+  - Arranca codigos, sorteos o ambos.
+  - Guarda canales en ${CONFIG_FILE}.
+  - Permite anadir, eliminar y reemplazar canales de codigos y sorteos.
+  - Muestra dashboard con estado por proceso y JOIN OK por canal.
+
+Comandos directos equivalentes:
+  npm start -- --channels canal1,canal2
+  npm run giveaways -- --channels canal1,canal2
+`);
+}
+
+function printBanner() {
+  const banner = String.raw`
+ __  __           _        ____            _       _       
+|  \/  | ___   __| | ___  / ___|  ___ _ __(_)_ __ | |_ ___ 
+| |\/| |/ _ \ / _  |/ _ \ \___ \ / __| '__| | '_ \| __/ __|
+| |  | | (_) | (_| |  __/  ___) | (__| |  | | |_) | |_\__ \
+|_|  |_|\___/ \__,_|\___| |____/ \___|_|  |_| .__/ \__|___/
+                                            |_|            
+`;
+  console.log(style(banner, 'cyan'));
+  console.log(center(style(APP_TITLE, 'magenta'), 64));
+  console.log(dim('IRC launcher + code monitor + giveaway detector'));
+  console.log('');
+}
+
+function printBox(title, rows) {
+  const width = 78;
+  const safeRows = rows.length > 0 ? rows : [''];
+  const header = ` ${title} `;
+  const top = `+${header}${'-'.repeat(Math.max(0, width - visibleLength(header) - 2))}+`;
+  console.log(style(top, 'blue'));
+
+  for (const row of safeRows) {
+    const text = truncateVisible(String(row), width - 4);
+    const padding = ' '.repeat(Math.max(0, width - visibleLength(text) - 3));
+    console.log(style('| ', 'blue') + text + padding + style('|', 'blue'));
+  }
+
+  console.log(style(`+${'-'.repeat(width - 2)}+`, 'blue'));
+  console.log('');
+}
+
+function clearScreen() {
+  if (process.stdout.isTTY) {
+    process.stdout.write('\x1Bc');
+  }
+}
+
+function stopChildren() {
+  for (const child of childProcesses) {
+    try {
+      child.kill();
+    } catch {
+      // El proceso ya puede haber terminado.
+    }
+  }
+}
+
+function center(text, width) {
+  const pad = Math.max(0, Math.floor((width - visibleLength(text)) / 2));
+  return `${' '.repeat(pad)}${text}`;
+}
+
+function truncateVisible(text, maxLength) {
+  if (visibleLength(text) <= maxLength) return text;
+
+  const plain = stripAnsi(text);
+  return `${plain.slice(0, Math.max(0, maxLength - 3))}...`;
+}
+
+function visibleLength(text) {
+  return stripAnsi(text).length;
+}
+
+function stripAnsi(text) {
+  return String(text).replace(/\x1b\[[0-9;]*m/g, '');
+}
+
+function style(text, color) {
+  if (!colorEnabled) return String(text);
+  return `${ansi[color] || ''}${text}${ansi.reset}`;
+}
+
+function green(text) {
+  return style(text, 'green');
+}
+
+function yellow(text) {
+  return style(text, 'yellow');
+}
+
+function red(text) {
+  return style(text, 'red');
+}
+
+function cyan(text) {
+  return style(text, 'cyan');
+}
+
+function magenta(text) {
+  return style(text, 'magenta');
+}
+
+function dim(text) {
+  return style(text, 'dim');
+}
+
+process.on('SIGINT', () => {
+  if (dashboardState) {
+    addLog('system', 'Deteniendo procesos por Ctrl+C...', 'error');
+    renderDashboard();
+  } else {
+    console.log('');
+    console.log('Deteniendo procesos...');
+  }
+  stopChildren();
+  if (childProcesses.size === 0) {
+    process.exit(0);
+  }
+});
+
+process.on('SIGTERM', () => {
+  stopChildren();
+  if (childProcesses.size === 0) {
+    process.exit(0);
+  }
+});

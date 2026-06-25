@@ -1,0 +1,21 @@
+{
+  "name": "twitch-code-clipboard",
+  "version": "1.0.0",
+  "description": "Monitor de chat de Twitch para detectar codigos, copiarlos al portapapeles de Windows y avisar con sonido.",
+  "type": "module",
+  "main": "src/index.js",
+  "scripts": {
+    "menu": "node src/menu.js",
+    "start": "node src/index.js",
+    "giveaways": "node src/giveaways.js",
+    "sound-test": "node src/index.js --sound-test",
+    "test": "node src/index.js --test"
+  },
+  "engines": {
+    "node": ">=18.17"
+  },
+  "dependencies": {
+    "clipboardy": "^4.0.0",
+    "ws": "^8.18.0"
+  }
+}
