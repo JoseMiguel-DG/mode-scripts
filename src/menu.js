@@ -4,6 +4,7 @@ import path from 'node:path';
 import process from 'node:process';
 import { createInterface } from 'node:readline/promises';
 import { stdin as input, stdout as output } from 'node:process';
+import { formatSyncResult, syncConfigToGit } from './config-sync.js';
 
 const APP_TITLE = 'Mode-Scripts v1';
 const CONFIG_FILE = path.resolve('config', 'mode-scripts.json');
@@ -95,7 +96,7 @@ try {
 async function mainMenu(config) {
   while (true) {
     renderHome(config);
-    const choice = await askChoice('Selecciona opcion [1]: ', ['1', '2', '3', '4', '5', '6', '7', '8'], '1');
+    const choice = await askChoice('Selecciona opcion [1]: ', ['1', '2', '3', '4', '5', '6', '7', '8', '9'], '1');
 
     if (choice === '1') {
       const session = await buildSessionConfig(config);
@@ -125,6 +126,8 @@ async function mainMenu(config) {
       renderConfigPath();
       await pause();
     } else if (choice === '8') {
+      await pushConfigToGitHub(config);
+    } else if (choice === '9') {
       return false;
     }
   }
@@ -151,7 +154,8 @@ function renderHome(config) {
     menuOption('5', 'Ajustes detector de sorteos', 'umbral, ventana y cooldown'),
     menuOption('6', 'Activar/desactivar KeyDrop bridge', config.keydropBridge ? 'actualmente ON' : 'actualmente OFF'),
     menuOption('7', 'Ver ruta de configuracion', 'archivo JSON persistente'),
-    menuOption('8', 'Salir', 'cerrar launcher')
+    menuOption('8', 'Subir configuracion a GitHub', 'commit + push automatico'),
+    menuOption('9', 'Salir', 'cerrar launcher')
   ]);
 }
 
@@ -311,6 +315,34 @@ function renderConfigPath() {
     'Puedes editar este JSON manualmente si quieres.',
     'El menu lo vuelve a cargar cada vez que arrancas npm run menu.'
   ]);
+}
+
+async function pushConfigToGitHub(config) {
+  clearScreen();
+  printBanner('GIT SYNC');
+  printBox('SUBIR CONFIG // GITHUB', [
+    metric('ARCHIVO', 'config/mode-scripts.json', 'inferno'),
+    metric('ALCANCE', 'solo configuracion compartida', 'ember'),
+    metric('ACCION', 'git add + commit + push', 'blood'),
+    '',
+    'Aviso: si el repositorio es publico, los canales guardados tambien seran publicos.'
+  ]);
+
+  await saveConfig(config);
+  printStatus('Sincronizando configuracion con GitHub...', 'info');
+
+  try {
+    const result = await syncConfigToGit();
+    printBox('GIT SYNC // OK', formatSyncResult(result).split('\n').map((line) => steel(line)));
+  } catch (error) {
+    const outputLines = String(error.message || error)
+      .split(/\r?\n/)
+      .filter(Boolean)
+      .map((line) => alert(line));
+    printBox('GIT SYNC // ERROR', outputLines.length > 0 ? outputLines : [alert('No se pudo completar el push.')]);
+  }
+
+  await pause();
 }
 
 async function buildSessionConfig(config) {
@@ -807,6 +839,7 @@ Menu TUI:
   - Arranca codigos, sorteos o ambos.
   - Guarda canales en ${CONFIG_FILE}.
   - Permite anadir, eliminar y reemplazar canales de codigos y sorteos.
+  - Puede commitear y pushear config/mode-scripts.json a GitHub.
   - Muestra dashboard con estado por proceso y JOIN OK por canal.
 
 Comandos directos equivalentes:

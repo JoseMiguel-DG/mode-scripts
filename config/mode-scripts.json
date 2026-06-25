@@ -1,0 +1,9 @@
+{
+  "mode": "codes-giveaways",
+  "codeChannels": [],
+  "giveawayChannels": [],
+  "keydropBridge": false,
+  "giveawayThreshold": 4,
+  "giveawayWindowSeconds": 12,
+  "giveawayCooldownSeconds": 90
+}

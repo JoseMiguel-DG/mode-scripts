@@ -76,7 +76,9 @@ git pull
 npm install
 ```
 
-La configuracion personal del menu vive en `config/mode-scripts.json` y no se sube al repositorio. Eso permite tener canales distintos en Windows y macOS si quieres.
+La configuracion compartida del menu vive en `config/mode-scripts.json` y se sube al repositorio. Si cambias canales en Windows, usa la opcion `Subir configuracion a GitHub` del menu o ejecuta `npm run config:push`; despues, en macOS ejecuta `git pull`. El flujo inverso es igual.
+
+Importante: el repositorio es publico, asi que los canales guardados en `config/mode-scripts.json` tambien seran visibles en GitHub.
 
 ## Funcionamiento General
 
@@ -122,7 +124,7 @@ El menu muestra una cabecera fija `Mode-Scripts v1 // INFERNO OPS` en todas las 
 config/mode-scripts.json
 ```
 
-Ese archivo es personal y esta ignorado por Git.
+Ese archivo esta versionado por Git para compartir la misma configuracion entre Windows y macOS.
 
 Desde el menu puedes:
 
@@ -133,6 +135,7 @@ Desde el menu puedes:
 - ajustar sensibilidad del detector de sorteos;
 - activar o desactivar el puente KeyDrop;
 - ver la ruta del archivo de configuracion.
+- subir la configuracion actual a GitHub con commit y push automatico.
 
 ### Canales Persistentes
 
@@ -151,6 +154,35 @@ canal1,canal2,canal3
 ```
 
 Puedes usar canales distintos para codigos y para sorteos. Si el modo incluye sorteos pero no hay canales de sorteos guardados, el menu puede usar los canales de codigos como fallback.
+
+### Sincronizar Configuracion
+
+Desde el menu principal puedes usar:
+
+```text
+Subir configuracion a GitHub
+```
+
+Esa opcion hace automaticamente:
+
+1. Guarda `config/mode-scripts.json`.
+2. Ejecuta `git add -f config/mode-scripts.json`.
+3. Crea un commit solo con ese archivo si hay cambios.
+4. Ejecuta `git push origin <branch>`.
+
+Tambien puedes hacerlo sin abrir el menu:
+
+```powershell
+npm run config:push
+```
+
+Para usar los cambios en el otro equipo:
+
+```bash
+git pull
+npm install
+npm run menu
+```
 
 ### Dashboard
 

@@ -1,5 +1,4 @@
 node_modules/
 logs/
-config/mode-scripts.json
 *.log
 .env
