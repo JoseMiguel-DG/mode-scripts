@@ -212,6 +212,17 @@ Durante la ejecucion, el TUI cambia a dashboard visual:
 - `GIVEAWAY LISTENER // PROCESS NODE`: proceso del detector de sorteos, PID, canales conectados y barra de senal.
 - `LIVE FEED // IRC STREAM`: ultimos eventos importantes coloreados por tipo.
 
+El banner superior queda fijo y el contenido del dashboard se pinta dentro de un viewport. Si hay muchos canales o no caben todos los bloques en la terminal, navega escribiendo estos comandos y pulsando Enter:
+
+```text
+down
+up
+pgdn
+pgup
+top
+bottom
+```
+
 Estados por canal:
 
 - `[WAIT] #canal`: aun no se ha confirmado el JOIN.

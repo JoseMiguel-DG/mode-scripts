@@ -34,6 +34,7 @@ let dashboardTimer = null;
 let dashboardState = null;
 let dashboardCommandsActive = false;
 let dashboardForceStopTimer = null;
+let dashboardScrollOffset = 0;
 
 const colorEnabled = process.stdout.isTTY && !process.env.NO_COLOR;
 const ansi = {
@@ -426,6 +427,7 @@ async function buildSessionConfig(config) {
 
 function startDashboard(session) {
   dashboardState = session;
+  dashboardScrollOffset = 0;
   startDashboardCommands();
   renderDashboard();
 
@@ -525,19 +527,94 @@ function renderDashboard() {
 
   clearScreen();
   printBanner('LIVE OPS');
-  printBox('RUNNING DASHBOARD // ACTIVE SESSION', [
+  renderDashboardViewport(buildDashboardRows());
+}
+
+function buildDashboardRows() {
+  if (!dashboardState) return [];
+
+  const rows = [];
+  rows.push(...buildBoxRows('RUNNING DASHBOARD // ACTIVE SESSION', [
     metric('MODO', MODE_LABELS[dashboardState.mode], 'hot'),
     metric('UPTIME', formatDuration(Date.now() - dashboardState.startedAt), 'acid'),
     metric('KEYDROP', dashboardState.keydropBridge ? 'BRIDGE ON' : 'BRIDGE OFF', dashboardState.keydropBridge ? 'neon' : 'muted'),
+    `${statusPill('SCROLL', 'warn')} down/up, pgdn/pgup, top/bottom`,
     `${statusPill('STOP', 'alert')} escribe stop + Enter para cerrar limpio`,
     `${statusPill('CTRL+C', 'alert')} atajo de parada`
-  ]);
+  ]));
 
   for (const processInfo of dashboardState.processes) {
-    printProcessBox(processInfo);
+    rows.push(...buildProcessBoxRows(processInfo));
   }
 
-  printLogBox(dashboardState.logs);
+  rows.push(...buildLogBoxRows(dashboardState.logs));
+  return rows;
+}
+
+function renderDashboardViewport(rows) {
+  const viewportHeight = getDashboardViewportHeight();
+  const footerHeight = 3;
+  const contentHeight = Math.max(1, viewportHeight - footerHeight);
+  const maxOffset = Math.max(0, rows.length - contentHeight);
+  dashboardScrollOffset = clampNumber(dashboardScrollOffset, 0, maxOffset);
+
+  const contentRows = rows.slice(dashboardScrollOffset, dashboardScrollOffset + contentHeight);
+  while (contentRows.length < contentHeight) {
+    contentRows.push('');
+  }
+
+  const footerRows = buildDashboardFooterRows(rows.length, contentHeight);
+  const outputRows = [...contentRows, ...footerRows].slice(0, viewportHeight);
+  writeViewportRows(outputRows);
+}
+
+function buildDashboardFooterRows(totalRows, contentHeight) {
+  const maxOffset = Math.max(0, totalRows - contentHeight);
+  const start = totalRows === 0 ? 0 : dashboardScrollOffset + 1;
+  const end = Math.min(totalRows, dashboardScrollOffset + contentHeight);
+  const scrollState = maxOffset > 0
+    ? `${start}-${end}/${totalRows}`
+    : `todo visible (${totalRows})`;
+
+  return [
+    panel(boxBorder('', '-')),
+    `${statusPill('VIEW', 'info')} ${steel(scrollState)} ${muted('//')} ${statusPill('CMD', 'warn')} ${steel('down up pgdn pgup top bottom stop')}`,
+    promptText('cmd: ')
+  ];
+}
+
+function writeViewportRows(rows) {
+  const fittedRows = rows.map((row, index) => {
+    if (index === rows.length - 1) {
+      return truncateVisible(row, UI_WIDTH);
+    }
+
+    return fitVisibleLine(row, UI_WIDTH);
+  });
+  output.write(fittedRows.join('\n'));
+}
+
+function getDashboardViewportHeight() {
+  const rows = output.rows || 40;
+  return Math.max(4, rows - BODY_START_ROW + 1);
+}
+
+function getDashboardContentHeight() {
+  return Math.max(1, getDashboardViewportHeight() - 3);
+}
+
+function getDashboardMaxScroll() {
+  return Math.max(0, buildDashboardRows().length - getDashboardContentHeight());
+}
+
+function scrollDashboard(delta) {
+  dashboardScrollOffset = clampNumber(dashboardScrollOffset + delta, 0, getDashboardMaxScroll());
+  renderDashboard();
+}
+
+function setDashboardScroll(position) {
+  dashboardScrollOffset = clampNumber(position, 0, getDashboardMaxScroll());
+  renderDashboard();
 }
 
 function startDashboardCommands() {
@@ -566,6 +643,36 @@ function handleDashboardCommand(rawCommand) {
 
   if (['stop', 'exit', 'quit', 'q'].includes(command)) {
     requestDashboardStop(`Comando "${command}" recibido.`);
+    return;
+  }
+
+  if (['down', 'd', 'j'].includes(command)) {
+    scrollDashboard(3);
+    return;
+  }
+
+  if (['up', 'u', 'k'].includes(command)) {
+    scrollDashboard(-3);
+    return;
+  }
+
+  if (['pgdn', 'pagedown', 'page down'].includes(command)) {
+    scrollDashboard(getDashboardContentHeight());
+    return;
+  }
+
+  if (['pgup', 'pageup', 'page up'].includes(command)) {
+    scrollDashboard(-getDashboardContentHeight());
+    return;
+  }
+
+  if (['top', 'home'].includes(command)) {
+    setDashboardScroll(0);
+    return;
+  }
+
+  if (['bottom', 'end', 'logs'].includes(command)) {
+    setDashboardScroll(getDashboardMaxScroll());
     return;
   }
 
@@ -627,13 +734,19 @@ function finishDashboardExit(code = 0) {
 }
 
 function printProcessBox(processInfo) {
+  for (const row of buildProcessBoxRows(processInfo)) {
+    console.log(row);
+  }
+}
+
+function buildProcessBoxRows(processInfo) {
   const connectedCount = processInfo.channels.filter((channel) => processInfo.connectedChannels.has(channel)).length;
   const channelRows = processInfo.channels.map((channel) => {
     const connected = processInfo.connectedChannels.has(channel);
     return `${connected ? statusPill('JOIN OK', 'ok') : statusPill('WAIT', 'warn')} ${steel('IRC')} ${connected ? neon(`#${channel}`) : amber(`#${channel}`)}`;
   });
 
-  printBox(`${processInfo.title.toUpperCase()} // PROCESS NODE`, [
+  return buildBoxRows(`${processInfo.title.toUpperCase()} // PROCESS NODE`, [
     `${metric('ESTADO', formatProcessStatus(processInfo.status), 'steel')}${processInfo.pid ? `  ${metric('PID', processInfo.pid, 'violet')}` : ''}`,
     `${metric('CANALES', `${connectedCount}/${processInfo.channels.length}`, connectedCount === processInfo.channels.length ? 'neon' : 'amber')} ${signalBar(connectedCount, processInfo.channels.length)}`,
     processInfo.bridgeStatus ? metric('BRIDGE', processInfo.bridgeStatus.toUpperCase(), 'neon') : '',
@@ -642,11 +755,17 @@ function printProcessBox(processInfo) {
 }
 
 function printLogBox(logs) {
+  for (const row of buildLogBoxRows(logs)) {
+    console.log(row);
+  }
+}
+
+function buildLogBoxRows(logs) {
   const rows = logs.length > 0
     ? logs.slice(-LOG_LINES).map(formatLogEntry)
     : [muted('Esperando eventos...')];
 
-  printBox('LIVE FEED // IRC STREAM', rows);
+  return buildBoxRows('LIVE FEED // IRC STREAM', rows);
 }
 
 function addLog(source, line, level = 'info') {
@@ -845,6 +964,11 @@ function clampInteger(value, min, max, fallback) {
   return Math.min(max, Math.max(min, parsed));
 }
 
+function clampNumber(value, min, max) {
+  if (!Number.isFinite(value)) return min;
+  return Math.min(max, Math.max(min, value));
+}
+
 function menuOption(index, label, hint = '') {
   const prefix = `${hot(`[${index}]`)} ${neon(label)}`;
   return hint ? `${prefix} ${muted('//')} ${steel(hint)}` : prefix;
@@ -929,6 +1053,7 @@ Menu TUI:
   - Permite anadir, eliminar y reemplazar canales de codigos y sorteos.
   - Puede commitear y pushear config/mode-scripts.json a GitHub.
   - Muestra dashboard con estado por proceso y JOIN OK por canal.
+  - En dashboard puedes navegar con down/up, pgdn/pgup, top/bottom.
   - En dashboard puedes escribir stop + Enter para cerrar procesos.
 
 Comandos directos equivalentes:
@@ -972,18 +1097,25 @@ function printBanner(section = 'CONTROL PANEL') {
 }
 
 function printBox(title, rows) {
+  for (const row of buildBoxRows(title, rows)) {
+    console.log(row);
+  }
+}
+
+function buildBoxRows(title, rows) {
   const safeRows = rows.length > 0 ? rows : [''];
   const contentWidth = UI_WIDTH - 6;
-  console.log(panel(boxBorder(` ${title} `, '=')));
+  const outputRows = [panel(boxBorder(` ${title} `, '='))];
 
   for (const row of safeRows) {
     const text = truncateVisible(String(row), contentWidth);
     const padding = ' '.repeat(Math.max(0, contentWidth - visibleLength(text)));
-    console.log(`${panel('|| ')}${text}${padding}${panel(' ||')}`);
+    outputRows.push(`${panel('|| ')}${text}${padding}${panel(' ||')}`);
   }
 
-  console.log(panel(boxBorder('', '=')));
-  console.log('');
+  outputRows.push(panel(boxBorder('', '=')));
+  outputRows.push('');
+  return outputRows;
 }
 
 function makeRail(label, fill) {
@@ -1071,6 +1203,12 @@ function truncateVisible(text, maxLength) {
 
   const plain = stripAnsi(text);
   return `${plain.slice(0, Math.max(0, maxLength - 3))}...`;
+}
+
+function fitVisibleLine(text, width) {
+  const truncated = truncateVisible(String(text), width);
+  const padding = ' '.repeat(Math.max(0, width - visibleLength(truncated)));
+  return `${truncated}${padding}`;
 }
 
 function visibleLength(text) {
