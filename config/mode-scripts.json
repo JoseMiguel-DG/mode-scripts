@@ -1,9 +1,15 @@
 {
   "mode": "codes-giveaways",
-  "codeChannels": [],
-  "giveawayChannels": [],
-  "keydropBridge": false,
+  "codeChannels": [
+    "v1nchenso7",
+    "tokioawp"
+  ],
+  "giveawayChannels": [
+    "v1nchenso7",
+    "tokioawp"
+  ],
+  "keydropBridge": true,
   "giveawayThreshold": 4,
-  "giveawayWindowSeconds": 12,
+  "giveawayWindowSeconds": 10,
   "giveawayCooldownSeconds": 90
 }
