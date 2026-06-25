@@ -217,7 +217,15 @@ Estados por canal:
 - `[WAIT] #canal`: aun no se ha confirmado el JOIN.
 - `[JOIN OK] #canal`: Twitch confirmo la conexion al canal.
 
-Para parar todo:
+Para parar todo de forma ordenada, escribe en el dashboard:
+
+```text
+stop
+```
+
+Tambien funcionan `exit`, `quit` o `q`. El dashboard enviara cierre a los procesos activos y, si alguno no termina tras unos segundos, intentara forzar el cierre.
+
+Atajo equivalente:
 
 ```text
 Ctrl+C

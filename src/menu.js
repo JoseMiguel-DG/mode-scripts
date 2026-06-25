@@ -1,4 +1,4 @@
-import { spawn } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
 import { readFile, writeFile, mkdir } from 'node:fs/promises';
 import path from 'node:path';
 import process from 'node:process';
@@ -32,6 +32,8 @@ const DEFAULT_CONFIG = {
 const childProcesses = new Set();
 let dashboardTimer = null;
 let dashboardState = null;
+let dashboardCommandsActive = false;
+let dashboardForceStopTimer = null;
 
 const colorEnabled = process.stdout.isTTY && !process.env.NO_COLOR;
 const ansi = {
@@ -81,9 +83,9 @@ const rl = createInterface({ input, output });
 try {
   const config = await loadConfig();
   const shouldLaunch = await mainMenu(config);
-  await rl.close();
 
   if (!shouldLaunch) {
+    await rl.close();
     process.exit(0);
   }
 } catch (error) {
@@ -424,6 +426,7 @@ async function buildSessionConfig(config) {
 
 function startDashboard(session) {
   dashboardState = session;
+  startDashboardCommands();
   renderDashboard();
 
   for (const childConfig of session.processes) {
@@ -453,9 +456,7 @@ function startChild(childConfig) {
     renderDashboard();
 
     if (childProcesses.size === 0) {
-      clearInterval(dashboardTimer);
-      dashboardTimer = null;
-      setTimeout(() => process.exit(code || 0), 500);
+      setTimeout(() => finishDashboardExit(code || 0), 500);
     }
   });
 
@@ -528,7 +529,8 @@ function renderDashboard() {
     metric('MODO', MODE_LABELS[dashboardState.mode], 'hot'),
     metric('UPTIME', formatDuration(Date.now() - dashboardState.startedAt), 'acid'),
     metric('KEYDROP', dashboardState.keydropBridge ? 'BRIDGE ON' : 'BRIDGE OFF', dashboardState.keydropBridge ? 'neon' : 'muted'),
-    `${statusPill('CTRL+C', 'alert')} detener todos los procesos`
+    `${statusPill('STOP', 'alert')} escribe stop + Enter para cerrar limpio`,
+    `${statusPill('CTRL+C', 'alert')} atajo de parada`
   ]);
 
   for (const processInfo of dashboardState.processes) {
@@ -536,6 +538,92 @@ function renderDashboard() {
   }
 
   printLogBox(dashboardState.logs);
+}
+
+function startDashboardCommands() {
+  if (dashboardCommandsActive) return;
+
+  dashboardCommandsActive = true;
+  rl.on('line', handleDashboardCommand);
+  input.resume();
+}
+
+function stopDashboardCommands() {
+  if (!dashboardCommandsActive) return;
+
+  rl.off('line', handleDashboardCommand);
+  dashboardCommandsActive = false;
+}
+
+function handleDashboardCommand(rawCommand) {
+  if (!dashboardState) return;
+
+  const command = String(rawCommand || '').trim().toLowerCase();
+  if (!command) {
+    renderDashboard();
+    return;
+  }
+
+  if (['stop', 'exit', 'quit', 'q'].includes(command)) {
+    requestDashboardStop(`Comando "${command}" recibido.`);
+    return;
+  }
+
+  addLog('system', `Comando no reconocido: "${command}". Usa stop para cerrar.`, 'error');
+  renderDashboard();
+}
+
+function requestDashboardStop(reason) {
+  if (dashboardState) {
+    addLog('system', `${reason} Cerrando listeners...`, 'error');
+    renderDashboard();
+  }
+
+  stopDashboardCommands();
+  stopChildren('SIGTERM');
+
+  if (childProcesses.size === 0) {
+    finishDashboardExit(0);
+    return;
+  }
+
+  if (!dashboardForceStopTimer) {
+    dashboardForceStopTimer = setTimeout(() => {
+      dashboardForceStopTimer = null;
+      if (childProcesses.size === 0) {
+        finishDashboardExit(0);
+        return;
+      }
+
+      addLog('system', 'Forzando cierre de procesos restantes...', 'error');
+      renderDashboard();
+      stopChildren('SIGKILL');
+
+      if (childProcesses.size === 0) {
+        finishDashboardExit(0);
+      }
+    }, 5000);
+  }
+}
+
+function finishDashboardExit(code = 0) {
+  if (dashboardTimer) {
+    clearInterval(dashboardTimer);
+    dashboardTimer = null;
+  }
+
+  if (dashboardForceStopTimer) {
+    clearTimeout(dashboardForceStopTimer);
+    dashboardForceStopTimer = null;
+  }
+
+  stopDashboardCommands();
+  try {
+    rl.close();
+  } catch {
+    // La interfaz puede estar ya cerrada.
+  }
+  process.exit(code);
 }
 
 function printProcessBox(processInfo) {
@@ -841,6 +929,7 @@ Menu TUI:
   - Permite anadir, eliminar y reemplazar canales de codigos y sorteos.
   - Puede commitear y pushear config/mode-scripts.json a GitHub.
   - Muestra dashboard con estado por proceso y JOIN OK por canal.
+  - En dashboard puedes escribir stop + Enter para cerrar procesos.
 
 Comandos directos equivalentes:
   npm start -- --channels canal1,canal2
@@ -952,10 +1041,20 @@ function resetScrollRegion() {
   output.write('\x1b[r');
 }
 
-function stopChildren() {
+function stopChildren(signal = 'SIGTERM') {
   for (const child of childProcesses) {
     try {
-      child.kill();
+      if (signal === 'SIGKILL' && process.platform === 'win32' && child.pid) {
+        const killResult = spawnSync('taskkill', ['/PID', String(child.pid), '/T', '/F'], {
+          stdio: 'ignore',
+          windowsHide: true
+        });
+        if (!killResult.error && killResult.status === 0) {
+          continue;
+        }
+      }
+
+      child.kill(signal);
     } catch {
       // El proceso ya puede haber terminado.
     }
@@ -1073,8 +1172,8 @@ function bone(text) {
 
 process.on('SIGINT', () => {
   if (dashboardState) {
-    addLog('system', 'Deteniendo procesos por Ctrl+C...', 'error');
-    renderDashboard();
+    requestDashboardStop('Ctrl+C recibido.');
+    return;
   } else {
     console.log('');
     console.log('Deteniendo procesos...');
@@ -1086,6 +1185,11 @@ process.on('SIGINT', () => {
 });
 
 process.on('SIGTERM', () => {
+  if (dashboardState) {
+    requestDashboardStop('SIGTERM recibido.');
+    return;
+  }
+
   stopChildren();
   if (childProcesses.size === 0) {
     process.exit(0);
