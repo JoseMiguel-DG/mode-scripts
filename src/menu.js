@@ -11,6 +11,7 @@ const DEFAULT_THRESHOLD = 4;
 const DEFAULT_WINDOW_SECONDS = 12;
 const DEFAULT_COOLDOWN_SECONDS = 90;
 const LOG_LINES = 13;
+const UI_WIDTH = 92;
 const MODES = new Set(['codes', 'codes-giveaways', 'giveaways']);
 const MODE_LABELS = {
   codes: 'Solo codigos',
@@ -35,13 +36,23 @@ const ansi = {
   reset: '\x1b[0m',
   bold: '\x1b[1m',
   dim: '\x1b[2m',
+  inverse: '\x1b[7m',
   red: '\x1b[31m',
   green: '\x1b[32m',
   yellow: '\x1b[33m',
   blue: '\x1b[34m',
   magenta: '\x1b[35m',
   cyan: '\x1b[36m',
-  gray: '\x1b[90m'
+  gray: '\x1b[90m',
+  neon: '\x1b[38;2;57;255;20m',
+  acid: '\x1b[38;2;190;255;0m',
+  hot: '\x1b[38;2;255;0;128m',
+  alert: '\x1b[38;2;255;49;49m',
+  amber: '\x1b[38;2;255;184;28m',
+  violet: '\x1b[38;2;177;94;255m',
+  steel: '\x1b[38;2;125;211;252m',
+  panel: '\x1b[38;2;15;255;210m',
+  muted: '\x1b[38;2;100;116;139m'
 };
 
 if (process.argv.slice(2).some((arg) => arg === '--help' || arg === '-h')) {
@@ -110,35 +121,36 @@ async function mainMenu(config) {
 
 function renderHome(config) {
   clearScreen();
-  printBanner();
-  printBox('CONFIGURACION GUARDADA', [
-    `Modo: ${MODE_LABELS[config.mode] || config.mode}`,
-    `Canales codigos: ${formatChannels(config.codeChannels) || dim('sin configurar')}`,
-    `Canales sorteos: ${formatChannels(config.giveawayChannels) || dim('sin configurar')}`,
-    `Regla sorteos: ${config.giveawayThreshold} usuarios / ${config.giveawayWindowSeconds}s`,
-    `Cooldown sorteos: ${config.giveawayCooldownSeconds}s`,
-    `KeyDrop bridge: ${config.keydropBridge ? green('ON') : dim('OFF')}`,
-    `Config: ${CONFIG_FILE}`
+  printBanner('CONTROL PANEL');
+  printSignalStrip(config);
+  printBox('CONFIG GUARDADA // SIGNAL MAP', [
+    metric('MODO', MODE_LABELS[config.mode] || config.mode, 'hot'),
+    metric('CODIGOS', formatChannels(config.codeChannels) || 'sin configurar', config.codeChannels.length ? 'neon' : 'muted'),
+    metric('SORTEOS', formatChannels(config.giveawayChannels) || 'sin configurar', config.giveawayChannels.length ? 'acid' : 'muted'),
+    metric('REGLA', `${config.giveawayThreshold} usuarios / ${config.giveawayWindowSeconds}s`, 'amber'),
+    metric('COOLDOWN', `${config.giveawayCooldownSeconds}s`, 'steel'),
+    metric('KEYDROP', config.keydropBridge ? 'BRIDGE ON' : 'BRIDGE OFF', config.keydropBridge ? 'neon' : 'muted'),
+    metric('CONFIG', CONFIG_FILE, 'steel')
   ]);
-  printBox('MENU', [
-    `${cyan('1')}  Arrancar con configuracion guardada`,
-    `${cyan('2')}  Cambiar modo de arranque`,
-    `${cyan('3')}  Anadir / eliminar / modificar canales de codigos`,
-    `${cyan('4')}  Anadir / eliminar / modificar canales de sorteos`,
-    `${cyan('5')}  Ajustes del detector de sorteos`,
-    `${cyan('6')}  Activar/desactivar KeyDrop bridge`,
-    `${cyan('7')}  Ver ruta de configuracion`,
-    `${cyan('8')}  Salir`
+  printBox('MENU // SELECT VECTOR', [
+    menuOption('1', 'Arrancar con configuracion guardada', 'lanza dashboard live'),
+    menuOption('2', 'Cambiar modo de arranque', 'codigos / sorteos / ambos'),
+    menuOption('3', 'Canales de codigos', 'anadir, eliminar o reemplazar'),
+    menuOption('4', 'Canales de sorteos', 'anadir, eliminar o reemplazar'),
+    menuOption('5', 'Ajustes detector de sorteos', 'umbral, ventana y cooldown'),
+    menuOption('6', 'Activar/desactivar KeyDrop bridge', config.keydropBridge ? 'actualmente ON' : 'actualmente OFF'),
+    menuOption('7', 'Ver ruta de configuracion', 'archivo JSON persistente'),
+    menuOption('8', 'Salir', 'cerrar launcher')
   ]);
 }
 
 async function changeMode(config) {
   clearScreen();
-  printBanner();
-  printBox('MODO DE ARRANQUE', [
-    `${cyan('1')}  Solo codigos`,
-    `${cyan('2')}  Codigos + deteccion de sorteos`,
-    `${cyan('3')}  Solo deteccion de sorteos`
+  printBanner('BOOT MODE');
+  printBox('MODO DE ARRANQUE // ROUTING', [
+    menuOption('1', 'Solo codigos', 'copia codigos al portapapeles'),
+    menuOption('2', 'Codigos + deteccion de sorteos', 'modo completo'),
+    menuOption('3', 'Solo deteccion de sorteos', 'radar de palabras repetidas')
   ]);
 
   const choice = await askChoice('Nuevo modo [2]: ', ['1', '2', '3'], '2');
@@ -151,19 +163,19 @@ async function changeMode(config) {
 async function manageCodeChannel(config) {
   while (true) {
     clearScreen();
-    printBanner();
+    printBanner('CODE CHANNELS');
     const channelRows = config.codeChannels.length > 0
-      ? config.codeChannels.map((channel, index) => `${String(index + 1).padStart(2, '0')}. #${channel}`)
-      : [dim('No hay canales de codigos guardados.')];
+      ? config.codeChannels.map(formatSavedChannelRow)
+      : [muted('No hay canales de codigos guardados.')];
 
-    printBox('CANALES DE CODIGOS', [
+    printBox('CANALES DE CODIGOS // CLIPBOARD RADAR', [
       ...channelRows,
       '',
-      `${cyan('1')}  Anadir canal(es)`,
-      `${cyan('2')}  Eliminar canal`,
-      `${cyan('3')}  Reemplazar lista completa`,
-      `${cyan('4')}  Borrar todos`,
-      `${cyan('5')}  Volver`
+      menuOption('1', 'Anadir canal(es)', 'separados por coma'),
+      menuOption('2', 'Eliminar canal', 'por numero o nombre'),
+      menuOption('3', 'Reemplazar lista completa', 'sobrescribe esta lista'),
+      menuOption('4', 'Borrar todos', 'deja la lista vacia'),
+      menuOption('5', 'Volver', 'menu principal')
     ]);
 
     const choice = await askChoice('Selecciona opcion [1]: ', ['1', '2', '3', '4', '5'], '1');
@@ -208,19 +220,19 @@ async function manageCodeChannel(config) {
 async function manageGiveawayChannels(config) {
   while (true) {
     clearScreen();
-    printBanner();
+    printBanner('GIVEAWAY CHANNELS');
     const channelRows = config.giveawayChannels.length > 0
-      ? config.giveawayChannels.map((channel, index) => `${String(index + 1).padStart(2, '0')}. #${channel}`)
-      : [dim('No hay canales de sorteos guardados.')];
+      ? config.giveawayChannels.map(formatSavedChannelRow)
+      : [muted('No hay canales de sorteos guardados.')];
 
-    printBox('CANALES DE SORTEOS', [
+    printBox('CANALES DE SORTEOS // GIVEAWAY RADAR', [
       ...channelRows,
       '',
-      `${cyan('1')}  Anadir canal(es)`,
-      `${cyan('2')}  Eliminar canal`,
-      `${cyan('3')}  Reemplazar lista completa`,
-      `${cyan('4')}  Borrar todos`,
-      `${cyan('5')}  Volver`
+      menuOption('1', 'Anadir canal(es)', 'separados por coma'),
+      menuOption('2', 'Eliminar canal', 'por numero o nombre'),
+      menuOption('3', 'Reemplazar lista completa', 'sobrescribe esta lista'),
+      menuOption('4', 'Borrar todos', 'deja la lista vacia'),
+      menuOption('5', 'Volver', 'menu principal')
     ]);
 
     const choice = await askChoice('Selecciona opcion [1]: ', ['1', '2', '3', '4', '5'], '1');
@@ -237,7 +249,7 @@ async function manageGiveawayChannels(config) {
         continue;
       }
 
-      const target = (await rl.question('Numero o nombre de canal a eliminar: ')).trim();
+      const target = (await rl.question(promptText('Numero o nombre de canal a eliminar: '))).trim();
       const removed = removeChannel(config.giveawayChannels, target);
       if (removed) {
         await saveConfig(config);
@@ -264,11 +276,11 @@ async function manageGiveawayChannels(config) {
 
 async function manageGiveawaySettings(config) {
   clearScreen();
-  printBanner();
-  printBox('AJUSTES DE SORTEOS', [
-    `Usuarios distintos: ${config.giveawayThreshold}`,
-    `Ventana: ${config.giveawayWindowSeconds}s`,
-    `Cooldown: ${config.giveawayCooldownSeconds}s`
+  printBanner('GIVEAWAY TUNING');
+  printBox('AJUSTES DE SORTEOS // DETECTION RULES', [
+    metric('USUARIOS', config.giveawayThreshold, 'acid'),
+    metric('VENTANA', `${config.giveawayWindowSeconds}s`, 'amber'),
+    metric('COOLDOWN', `${config.giveawayCooldownSeconds}s`, 'steel')
   ]);
 
   config.giveawayThreshold = await askInteger(`Usuarios distintos [${config.giveawayThreshold}]: `, config.giveawayThreshold, 2, 50);
@@ -281,9 +293,9 @@ async function manageGiveawaySettings(config) {
 
 function renderConfigPath() {
   clearScreen();
-  printBanner();
-  printBox('CONFIG FILE', [
-    CONFIG_FILE,
+  printBanner('CONFIG FILE');
+  printBox('CONFIG FILE // PERSISTENT STATE', [
+    steel(CONFIG_FILE),
     '',
     'Puedes editar este JSON manualmente si quieres.',
     'El menu lo vuelve a cargar cada vez que arrancas npm run menu.'
@@ -468,12 +480,12 @@ function renderDashboard() {
   if (!dashboardState) return;
 
   clearScreen();
-  printBanner();
-  printBox('RUNNING DASHBOARD', [
-    `Modo: ${MODE_LABELS[dashboardState.mode]}`,
-    `Uptime: ${formatDuration(Date.now() - dashboardState.startedAt)}`,
-    `KeyDrop bridge: ${dashboardState.keydropBridge ? green('ON') : dim('OFF')}`,
-    'Ctrl+C para detener todos los procesos.'
+  printBanner('LIVE OPS');
+  printBox('RUNNING DASHBOARD // ACTIVE SESSION', [
+    metric('MODO', MODE_LABELS[dashboardState.mode], 'hot'),
+    metric('UPTIME', formatDuration(Date.now() - dashboardState.startedAt), 'acid'),
+    metric('KEYDROP', dashboardState.keydropBridge ? 'BRIDGE ON' : 'BRIDGE OFF', dashboardState.keydropBridge ? 'neon' : 'muted'),
+    `${statusPill('CTRL+C', 'alert')} detener todos los procesos`
   ]);
 
   for (const processInfo of dashboardState.processes) {
@@ -484,24 +496,26 @@ function renderDashboard() {
 }
 
 function printProcessBox(processInfo) {
+  const connectedCount = processInfo.channels.filter((channel) => processInfo.connectedChannels.has(channel)).length;
   const channelRows = processInfo.channels.map((channel) => {
     const connected = processInfo.connectedChannels.has(channel);
-    return `${connected ? green('[OK]') : yellow('[WAIT]')} #${channel}`;
+    return `${connected ? statusPill('JOIN OK', 'ok') : statusPill('WAIT', 'warn')} ${steel('IRC')} ${connected ? neon(`#${channel}`) : amber(`#${channel}`)}`;
   });
 
-  printBox(processInfo.title.toUpperCase(), [
-    `Estado: ${formatProcessStatus(processInfo.status)}${processInfo.pid ? `  PID: ${processInfo.pid}` : ''}`,
-    processInfo.bridgeStatus ? `Bridge: ${green(processInfo.bridgeStatus)}` : '',
+  printBox(`${processInfo.title.toUpperCase()} // PROCESS NODE`, [
+    `${metric('ESTADO', formatProcessStatus(processInfo.status), 'steel')}${processInfo.pid ? `  ${metric('PID', processInfo.pid, 'violet')}` : ''}`,
+    `${metric('CANALES', `${connectedCount}/${processInfo.channels.length}`, connectedCount === processInfo.channels.length ? 'neon' : 'amber')} ${signalBar(connectedCount, processInfo.channels.length)}`,
+    processInfo.bridgeStatus ? metric('BRIDGE', processInfo.bridgeStatus.toUpperCase(), 'neon') : '',
     ...channelRows
   ].filter(Boolean));
 }
 
 function printLogBox(logs) {
   const rows = logs.length > 0
-    ? logs.slice(-LOG_LINES).map((entry) => `${dim(entry.time)} ${style(`[${entry.source}]`, entry.level === 'error' ? 'red' : entry.level === 'hit' ? 'magenta' : entry.level === 'ok' ? 'green' : 'cyan')} ${formatLogLine(entry.line, entry.level)}`)
-    : [dim('Esperando eventos...')];
+    ? logs.slice(-LOG_LINES).map(formatLogEntry)
+    : [muted('Esperando eventos...')];
 
-  printBox('LIVE FEED', rows);
+  printBox('LIVE FEED // IRC STREAM', rows);
 }
 
 function addLog(source, line, level = 'info') {
@@ -520,21 +534,32 @@ function addLog(source, line, level = 'info') {
 }
 
 function formatProcessStatus(status) {
-  if (status === 'connected') return green('CONNECTED');
-  if (status === 'joining') return yellow('JOINING');
-  if (status === 'booting' || status === 'starting') return yellow('STARTING');
-  if (status === 'reconnecting') return yellow('RECONNECTING');
-  if (status === 'disconnected') return red('DISCONNECTED');
-  if (status === 'error' || status.startsWith('exit:1')) return red(status.toUpperCase());
-  if (status.startsWith('exit:') || status.startsWith('stopped:')) return dim(status.toUpperCase());
+  if (status === 'connected') return statusPill('CONNECTED', 'ok');
+  if (status === 'joining') return statusPill('JOINING', 'warn');
+  if (status === 'booting' || status === 'starting') return statusPill('STARTING', 'warn');
+  if (status === 'reconnecting') return statusPill('RECONNECT', 'warn');
+  if (status === 'disconnected') return statusPill('DISCONNECTED', 'alert');
+  if (status === 'error' || status.startsWith('exit:1')) return statusPill(status.toUpperCase(), 'alert');
+  if (status.startsWith('exit:') || status.startsWith('stopped:')) return statusPill(status.toUpperCase(), 'off');
   return status.toUpperCase();
 }
 
 function formatLogLine(line, level) {
-  if (level === 'error') return red(line);
-  if (level === 'hit') return magenta(line);
-  if (level === 'ok') return green(line);
-  return line;
+  if (level === 'error') return alert(line);
+  if (level === 'hit') return hot(line);
+  if (level === 'ok') return neon(line);
+  return steel(line);
+}
+
+function formatLogEntry(entry) {
+  const level = entry.level === 'error'
+    ? 'alert'
+    : entry.level === 'hit'
+      ? 'hot'
+      : entry.level === 'ok'
+        ? 'ok'
+        : 'info';
+  return `${muted(entry.time)} ${statusPill(entry.source.toUpperCase(), level)} ${formatLogLine(entry.line, entry.level)}`;
 }
 
 async function loadConfig() {
@@ -689,6 +714,41 @@ function clampInteger(value, min, max, fallback) {
   return Math.min(max, Math.max(min, parsed));
 }
 
+function menuOption(index, label, hint = '') {
+  const prefix = `${hot(`[${index}]`)} ${neon(label)}`;
+  return hint ? `${prefix} ${muted('//')} ${steel(hint)}` : prefix;
+}
+
+function metric(label, value, color = 'steel') {
+  const text = String(value);
+  const renderedValue = stripAnsi(text) === text ? style(text, color) : text;
+  return `${muted(label.padEnd(9))} ${renderedValue}`;
+}
+
+function statusPill(text, level = 'info') {
+  const colors = {
+    ok: 'neon',
+    warn: 'amber',
+    alert: 'alert',
+    error: 'alert',
+    hot: 'hot',
+    off: 'muted',
+    info: 'steel'
+  };
+  return style(`[${text}]`, colors[level] || colors.info);
+}
+
+function signalBar(connected, total) {
+  const width = 18;
+  const ratio = total > 0 ? connected / total : 0;
+  const filled = Math.max(0, Math.min(width, Math.round(ratio * width)));
+  return `${muted('[')}${neon('#'.repeat(filled))}${muted('-'.repeat(width - filled))}${muted(']')}`;
+}
+
+function formatSavedChannelRow(channel, index) {
+  return `${muted(String(index + 1).padStart(2, '0'))} ${statusPill('SAVED', 'info')} ${steel('IRC')} ${neon(`#${channel}`)}`;
+}
+
 function formatOneChannel(channel) {
   return channel ? `#${channel}` : dim('sin configurar');
 }
@@ -714,16 +774,16 @@ function formatClock(date) {
 }
 
 function promptText(text) {
-  return style(`> ${text}`, 'cyan');
+  return `${hot('mode')}${muted('@')}${neon('scripts')} ${acid('>')} ${steel(text)}`;
 }
 
 function printStatus(text, level = 'info') {
-  const color = level === 'error' ? 'red' : level === 'ok' ? 'green' : 'yellow';
-  console.log(style(`:: ${text}`, color));
+  const pillLevel = level === 'error' ? 'alert' : level === 'ok' ? 'ok' : 'warn';
+  console.log(`${statusPill(level.toUpperCase(), pillLevel)} ${steel(text)}`);
 }
 
 function printHelp() {
-  printBanner();
+  printBanner('HELP');
   console.log(`
 Uso:
   npm run menu
@@ -740,36 +800,68 @@ Comandos directos equivalentes:
 `);
 }
 
-function printBanner() {
-  const banner = String.raw`
- __  __           _        ____            _       _       
-|  \/  | ___   __| | ___  / ___|  ___ _ __(_)_ __ | |_ ___ 
-| |\/| |/ _ \ / _  |/ _ \ \___ \ / __| '__| | '_ \| __/ __|
-| |  | | (_) | (_| |  __/  ___) | (__| |  | | |_) | |_\__ \
-|_|  |_|\___/ \__,_|\___| |____/ \___|_|  |_| .__/ \__|___/
-                                            |_|            
-`;
-  console.log(style(banner, 'cyan'));
-  console.log(center(style(APP_TITLE, 'magenta'), 64));
-  console.log(dim('IRC launcher + code monitor + giveaway detector'));
+function printSignalStrip(config) {
+  const cells = [
+    `${muted('IRC')} ${statusPill('ANON READ', 'ok')}`,
+    `${muted('MODE')} ${hot(MODE_LABELS[config.mode] || config.mode)}`,
+    `${muted('CODE CH')} ${neon(config.codeChannels.length)}`,
+    `${muted('RAFFLE CH')} ${acid(config.giveawayChannels.length)}`,
+    `${muted('BRIDGE')} ${config.keydropBridge ? statusPill('ON', 'ok') : statusPill('OFF', 'off')}`
+  ];
+
+  console.log(center(cells.join(` ${muted('//')} `), UI_WIDTH));
+  console.log('');
+}
+
+function printBanner(section = 'CONTROL PANEL') {
+  const banner = [
+    ' __  __           _        ____            _       _       ',
+    '|  \\/  | ___   __| | ___  / ___|  ___ _ __(_)_ __ | |_ ___ ',
+    '| |\\/| |/ _ \\ / _  |/ _ \\ \\___ \\ / __| \'__| | \'_ \\| __/ __|',
+    '| |  | | (_) | (_| |  __/  ___) | (__| |  | | |_) | |_\\__ \\',
+    '|_|  |_|\\___/ \\__,_|\\___| |____/ \\___|_|  |_| .__/ \\__|___/',
+    '                                            |_|            '
+  ];
+  const palette = ['neon', 'acid', 'steel', 'hot', 'violet', 'neon'];
+
+  console.log(hot(makeRail(` ${APP_TITLE.toUpperCase()} // ${section.toUpperCase()} `, '=')));
+  for (const [index, line] of banner.entries()) {
+    console.log(center(style(line, palette[index % palette.length]), UI_WIDTH));
+  }
+  console.log(center(`${statusPill('TWITCH IRC', 'ok')} ${muted('//')} ${statusPill('CODE CLIPBOARD', 'hot')} ${muted('//')} ${statusPill('GIVEAWAY RADAR', 'warn')}`, UI_WIDTH));
+  console.log(muted(makeRail('', '-')));
   console.log('');
 }
 
 function printBox(title, rows) {
-  const width = 78;
   const safeRows = rows.length > 0 ? rows : [''];
-  const header = ` ${title} `;
-  const top = `+${header}${'-'.repeat(Math.max(0, width - visibleLength(header) - 2))}+`;
-  console.log(style(top, 'blue'));
+  const contentWidth = UI_WIDTH - 6;
+  console.log(panel(boxBorder(` ${title} `, '=')));
 
   for (const row of safeRows) {
-    const text = truncateVisible(String(row), width - 4);
-    const padding = ' '.repeat(Math.max(0, width - visibleLength(text) - 3));
-    console.log(style('| ', 'blue') + text + padding + style('|', 'blue'));
+    const text = truncateVisible(String(row), contentWidth);
+    const padding = ' '.repeat(Math.max(0, contentWidth - visibleLength(text)));
+    console.log(`${panel('|| ')}${text}${padding}${panel(' ||')}`);
   }
 
-  console.log(style(`+${'-'.repeat(width - 2)}+`, 'blue'));
+  console.log(panel(boxBorder('', '=')));
   console.log('');
+}
+
+function makeRail(label, fill) {
+  if (!label) return fill.repeat(UI_WIDTH);
+
+  const remaining = Math.max(0, UI_WIDTH - visibleLength(label));
+  const left = Math.floor(remaining / 2);
+  const right = remaining - left;
+  return `${fill.repeat(left)}${label}${fill.repeat(right)}`;
+}
+
+function boxBorder(label, fill) {
+  if (!label) return `#${fill.repeat(UI_WIDTH - 2)}#`;
+
+  const remaining = Math.max(0, UI_WIDTH - visibleLength(label) - 2);
+  return `#${label}${fill.repeat(remaining)}#`;
 }
 
 function clearScreen() {
@@ -835,6 +927,42 @@ function magenta(text) {
 
 function dim(text) {
   return style(text, 'dim');
+}
+
+function neon(text) {
+  return style(text, 'neon');
+}
+
+function acid(text) {
+  return style(text, 'acid');
+}
+
+function hot(text) {
+  return style(text, 'hot');
+}
+
+function alert(text) {
+  return style(text, 'alert');
+}
+
+function amber(text) {
+  return style(text, 'amber');
+}
+
+function violet(text) {
+  return style(text, 'violet');
+}
+
+function steel(text) {
+  return style(text, 'steel');
+}
+
+function muted(text) {
+  return style(text, 'muted');
+}
+
+function panel(text) {
+  return style(text, 'panel');
 }
 
 process.on('SIGINT', () => {

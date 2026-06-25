@@ -116,7 +116,7 @@ npm run menu
 
 Ejecutalo directamente en una terminal interactiva: PowerShell en Windows o Terminal en macOS. No esta pensado para usarse por pipe o redireccion de entrada.
 
-El menu muestra un banner `Mode-Scripts v1` y guarda configuracion en:
+El menu muestra una cabecera fija `Mode-Scripts v1` en todas las pantallas, con paneles neon de estilo consola, linea de senal IRC y estado rapido de modo, canales y bridge. Guarda configuracion en:
 
 ```text
 config/mode-scripts.json
@@ -154,17 +154,17 @@ Puedes usar canales distintos para codigos y para sorteos. Si el modo incluye so
 
 ### Dashboard
 
-Durante la ejecucion, el TUI cambia a dashboard:
+Durante la ejecucion, el TUI cambia a dashboard visual:
 
-- `RUNNING DASHBOARD`: modo activo, uptime y estado del puente KeyDrop.
-- `CODE CLIPBOARD`: proceso del detector de codigos.
-- `GIVEAWAY LISTENER`: proceso del detector de sorteos.
-- `LIVE FEED`: ultimos eventos importantes.
+- `RUNNING DASHBOARD // ACTIVE SESSION`: modo activo, uptime y estado del puente KeyDrop.
+- `CODE CLIPBOARD // PROCESS NODE`: proceso del detector de codigos, PID, canales conectados y barra de senal.
+- `GIVEAWAY LISTENER // PROCESS NODE`: proceso del detector de sorteos, PID, canales conectados y barra de senal.
+- `LIVE FEED // IRC STREAM`: ultimos eventos importantes coloreados por tipo.
 
 Estados por canal:
 
 - `[WAIT] #canal`: aun no se ha confirmado el JOIN.
-- `[OK] #canal`: Twitch confirmo la conexion al canal.
+- `[JOIN OK] #canal`: Twitch confirmo la conexion al canal.
 
 Para parar todo:
 
