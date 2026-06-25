@@ -176,6 +176,25 @@ Tambien puedes hacerlo sin abrir el menu:
 npm run config:push
 ```
 
+Si en macOS Git pide `Username for 'https://github.com'`, significa que ese equipo aun no tiene credenciales de GitHub guardadas. El push automatico no abre un prompt interactivo para evitar que el menu se quede esperando input oculto. Configura GitHub una vez con GitHub CLI:
+
+```bash
+gh auth login
+gh auth setup-git
+```
+
+Luego vuelve a ejecutar:
+
+```bash
+npm run config:push
+```
+
+Alternativa con SSH:
+
+```bash
+git remote set-url origin git@github.com:JoseMiguel-DG/mode-scripts.git
+```
+
 Para usar los cambios en el otro equipo:
 
 ```bash

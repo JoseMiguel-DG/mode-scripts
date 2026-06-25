@@ -83,21 +83,30 @@ export function formatSyncResult(result) {
 }
 
 function runGit(args, options = {}) {
+  const command = `git ${args.join(' ')}`;
   const result = spawnSync('git', args, {
     cwd: options.cwd || process.cwd(),
     encoding: 'utf8',
+    env: {
+      ...process.env,
+      GIT_TERMINAL_PROMPT: '0',
+      GCM_INTERACTIVE: 'never'
+    },
+    timeout: options.timeout || 45000,
     windowsHide: true
   });
   const allowExitCodes = options.allowExitCodes || [0];
 
   if (result.error) {
-    throw new GitCommandError(`No se pudo ejecutar git: ${result.error.message}`, result);
+    const detail = result.error.code === 'ETIMEDOUT'
+      ? 'Git tardo demasiado y se detuvo. Revisa que no este esperando credenciales.'
+      : `No se pudo ejecutar git: ${result.error.message}`;
+    throw new GitCommandError(detail, result);
   }
 
   if (!allowExitCodes.includes(result.status)) {
-    const command = `git ${args.join(' ')}`;
     const output = cleanOutput(`${result.stdout || ''}\n${result.stderr || ''}`);
-    throw new GitCommandError(`${command} fallo.${output ? `\n${output}` : ''}`, result);
+    throw new GitCommandError(formatGitFailure(command, output), result);
   }
 
   return {
@@ -121,6 +130,30 @@ function cleanOutput(text) {
     .map((line) => line.trim())
     .filter(Boolean)
     .join(' | ');
+}
+
+function formatGitFailure(command, output) {
+  const lowerOutput = output.toLowerCase();
+  const authFailed = lowerOutput.includes('terminal prompts disabled')
+    || lowerOutput.includes('could not read username')
+    || lowerOutput.includes('authentication failed')
+    || lowerOutput.includes('permission denied')
+    || lowerOutput.includes('repository not found');
+
+  if (!authFailed) {
+    return `${command} fallo.${output ? `\n${output}` : ''}`;
+  }
+
+  return `${command} fallo por autenticacion de GitHub.
+${output}
+
+El push automatico no puede pedir usuario/contrasena dentro del menu.
+Configura credenciales en este equipo y vuelve a intentarlo:
+  gh auth login
+  gh auth setup-git
+
+Alternativa: usa SSH en el remoto:
+  git remote set-url origin git@github.com:JoseMiguel-DG/mode-scripts.git`;
 }
 
 function printHelp() {
